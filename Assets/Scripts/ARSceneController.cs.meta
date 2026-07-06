@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: cf8535f4ce7a9b34ea6d1dcad42603e6
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences:
+  - fallbackPrefab: {fileID: 7601872709193176524, guid: 2b8a724eb9f335042af4ec8afb522acd, type: 3}
+  - titleText: {instanceID: 0}
+  - narrationText: {instanceID: 0}
+  - audioSource: {instanceID: 0}
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 

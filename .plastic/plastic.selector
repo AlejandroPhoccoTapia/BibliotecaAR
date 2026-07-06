@@ -1,0 +1,4 @@
+repository "BibliotecaAR/BibliotecaAR 2026-07-06_13-51-06@4674147564037@cloud"
+  path "/"
+    br "/main"
+    co "/main"
