@@ -5,6 +5,8 @@ using TMPro;
 using UnityEngine;
 using UnityEngine.Networking;
 using UnityEngine.SceneManagement;
+using UnityEngine.XR.ARFoundation;
+using UnityEngine.XR.ARSubsystems;
 
 public class ARSceneController : MonoBehaviour
 {
@@ -52,6 +54,8 @@ public class ARSceneController : MonoBehaviour
     public string apiBaseUrl = "http://192.168.1.48:8000/api";
     public float apiTimeoutSeconds = 10f;
     public bool fallbackToLocalContent = true;
+    public bool addTrackingImageFromApi = true;
+    public float trackingImagePhysicalWidthMeters = 0.06f;
 
     [Header("Optional UI")]
     public TMP_Text titleText;
@@ -284,6 +288,9 @@ public class ARSceneController : MonoBehaviour
 
             SceneContent apiContent = CreateContentFromApi(apiScene);
             ApplyContent(apiContent);
+
+            if (addTrackingImageFromApi)
+                yield return AddTrackingImageFromApi(apiScene);
         }
         finally
         {
@@ -337,6 +344,141 @@ public class ARSceneController : MonoBehaviour
             audioSource.clip = clip;
             audioSource.Play();
         }
+    }
+
+    private IEnumerator AddTrackingImageFromApi(UnitySceneApiResponse apiScene)
+    {
+        if (apiScene == null ||
+            string.IsNullOrWhiteSpace(apiScene.qr_code) ||
+            string.IsNullOrWhiteSpace(apiScene.qr_image_url))
+        {
+            Debug.Log("ARSceneController: API no envio qr_image_url para tracking runtime");
+            yield break;
+        }
+
+        ARTrackedImageManager imageManager = FindAnyObjectByType<ARTrackedImageManager>();
+        if (imageManager == null)
+        {
+            Debug.LogWarning("ARSceneController: no se encontro ARTrackedImageManager para agregar QR runtime");
+            yield break;
+        }
+
+        if (ReferenceLibraryContainsName(imageManager.referenceLibrary, apiScene.qr_code))
+        {
+            Debug.Log("ARSceneController: QR ya existe en reference library: " + apiScene.qr_code);
+            yield break;
+        }
+
+        float waitStartedAt = Time.realtimeSinceStartup;
+        while (ARSession.state < ARSessionState.Ready)
+        {
+            if (Time.realtimeSinceStartup - waitStartedAt > apiTimeoutSeconds)
+            {
+                Debug.LogWarning("ARSceneController: ARSession no llego a Ready para agregar QR runtime, state=" + ARSession.state);
+                yield break;
+            }
+
+            yield return null;
+        }
+
+        Debug.Log("ARSceneController: descargando imagen QR runtime: " + apiScene.qr_image_url);
+
+        using (UnityWebRequest imageRequest = UnityWebRequestTexture.GetTexture(apiScene.qr_image_url))
+        {
+            imageRequest.timeout = Mathf.Max(1, Mathf.RoundToInt(apiTimeoutSeconds));
+            yield return imageRequest.SendWebRequest();
+
+            if (imageRequest.result != UnityWebRequest.Result.Success)
+            {
+                Debug.LogWarning(
+                    "ARSceneController: no se pudo descargar imagen QR runtime result=" +
+                    imageRequest.result +
+                    " code=" +
+                    imageRequest.responseCode +
+                    " error=" +
+                    imageRequest.error
+                );
+                yield break;
+            }
+
+            Texture2D qrTexture = DownloadHandlerTexture.GetContent(imageRequest);
+            if (qrTexture == null)
+            {
+                Debug.LogWarning("ARSceneController: imagen QR runtime descargada invalida");
+                yield break;
+            }
+
+            MutableRuntimeReferenceImageLibrary mutableLibrary = GetMutableRuntimeReferenceImageLibrary(imageManager);
+            if (mutableLibrary == null)
+            {
+                Destroy(qrTexture);
+                yield break;
+            }
+
+            AddReferenceImageJobState addImageJob;
+            try
+            {
+                addImageJob = mutableLibrary.ScheduleAddImageWithValidationJob(
+                    qrTexture,
+                    apiScene.qr_code,
+                    trackingImagePhysicalWidthMeters
+                );
+            }
+            catch (Exception exception)
+            {
+                Debug.LogWarning("ARSceneController: no se pudo programar QR runtime: " + exception);
+                Destroy(qrTexture);
+                yield break;
+            }
+
+            while (addImageJob.status.IsPending())
+                yield return null;
+
+            Debug.Log(
+                "ARSceneController: resultado agregar QR runtime codigo=" +
+                apiScene.qr_code +
+                " status=" +
+                addImageJob.status
+            );
+
+            Destroy(qrTexture);
+        }
+    }
+
+    private MutableRuntimeReferenceImageLibrary GetMutableRuntimeReferenceImageLibrary(ARTrackedImageManager imageManager)
+    {
+        if (imageManager.referenceLibrary is MutableRuntimeReferenceImageLibrary mutableLibrary)
+            return mutableLibrary;
+
+        if (imageManager.referenceLibrary is XRReferenceImageLibrary serializedLibrary)
+        {
+            RuntimeReferenceImageLibrary runtimeLibrary = imageManager.CreateRuntimeLibrary(serializedLibrary);
+            imageManager.referenceLibrary = runtimeLibrary;
+
+            if (runtimeLibrary is MutableRuntimeReferenceImageLibrary createdMutableLibrary)
+                return createdMutableLibrary;
+        }
+
+        Debug.LogWarning(
+            "ARSceneController: reference library no es mutable en runtime: " +
+            (imageManager.referenceLibrary == null ? "null" : imageManager.referenceLibrary.GetType().Name)
+        );
+        return null;
+    }
+
+    private bool ReferenceLibraryContainsName(IReferenceImageLibrary library, string imageName)
+    {
+        if (library == null || string.IsNullOrWhiteSpace(imageName))
+            return false;
+
+        int count = library.count;
+        for (int i = 0; i < count; i++)
+        {
+            if (library[i].name == imageName)
+                return true;
+        }
+
+        return false;
     }
 
     private void ApplyLocalContent(string qrCode)
