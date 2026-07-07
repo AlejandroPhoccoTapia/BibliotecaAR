@@ -1,7 +1,9 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
+using UnityEngine.Networking;
 using UnityEngine.SceneManagement;
 
 public class ARSceneController : MonoBehaviour
@@ -13,13 +15,43 @@ public class ARSceneController : MonoBehaviour
         public string title;
         [TextArea(2, 5)]
         public string narration;
+        public string prefabKey;
         public GameObject prefab;
         public AudioClip audioClip;
+        public string audioUrl;
+    }
+
+    [Serializable]
+    public class PrefabBinding
+    {
+        public string prefabKey;
+        public GameObject prefab;
+    }
+
+    [Serializable]
+    private class UnitySceneApiResponse
+    {
+        public string qr_code;
+        public string book_title;
+        public string title;
+        public int order;
+        public string text;
+        public string prefab_key;
+        public string cover_url;
+        public string audio_url;
+        public string qr_image_url;
     }
 
     [Header("Content")]
     public List<SceneContent> contents = new List<SceneContent>();
+    public List<PrefabBinding> prefabBindings = new List<PrefabBinding>();
     public GameObject fallbackPrefab;
+
+    [Header("API")]
+    public bool loadContentFromApi = true;
+    public string apiBaseUrl = "http://192.168.1.100:8000/api";
+    public float apiTimeoutSeconds = 10f;
+    public bool fallbackToLocalContent = true;
 
     [Header("Optional UI")]
     public TMP_Text titleText;
@@ -33,8 +65,9 @@ public class ARSceneController : MonoBehaviour
 
     private SceneContent selectedContent;
     private Dictionary<string, SceneContent> contentByCode;
+    private Dictionary<string, GameObject> prefabByKey;
 
-    void Start()
+    IEnumerator Start()
     {
         BuildContentDictionary();
 
@@ -43,18 +76,18 @@ public class ARSceneController : MonoBehaviour
         {
             Debug.LogWarning("ARSceneController: no hay codigo QR recibido");
             ApplyContent(CreateUnknownContent("sin_codigo"));
-            return;
+            yield break;
         }
 
         Debug.Log("ARSceneController: codigo recibido en ARScene: " + qrCode);
 
-        if (!contentByCode.TryGetValue(qrCode, out selectedContent))
+        if (loadContentFromApi)
         {
-            Debug.LogWarning("ARSceneController: no existe contenido local para QR: " + qrCode);
-            selectedContent = CreateUnknownContent(qrCode);
+            yield return LoadContentFromApi(qrCode);
+            yield break;
         }
 
-        ApplyContent(selectedContent);
+        ApplyLocalContent(qrCode);
     }
 
     public void PlayAudio()
@@ -109,6 +142,8 @@ public class ARSceneController : MonoBehaviour
 
             if (content.audioClip != null)
                 audioSource.Play();
+            else if (!string.IsNullOrWhiteSpace(content.audioUrl))
+                StartCoroutine(LoadAudioFromUrl(content.audioUrl));
         }
 
         ARRaycastPlaceObject placer = FindAnyObjectByType<ARRaycastPlaceObject>();
@@ -153,6 +188,7 @@ public class ARSceneController : MonoBehaviour
     {
         EnsureDefaultContents();
         contentByCode = new Dictionary<string, SceneContent>();
+        prefabByKey = new Dictionary<string, GameObject>();
 
         foreach (SceneContent content in contents)
         {
@@ -160,7 +196,140 @@ public class ARSceneController : MonoBehaviour
                 continue;
 
             contentByCode[content.qrCode] = content;
+
+            if (!string.IsNullOrWhiteSpace(content.prefabKey) && content.prefab != null)
+                prefabByKey[content.prefabKey] = content.prefab;
         }
+
+        foreach (PrefabBinding binding in prefabBindings)
+        {
+            if (binding == null || string.IsNullOrWhiteSpace(binding.prefabKey) || binding.prefab == null)
+                continue;
+
+            prefabByKey[binding.prefabKey] = binding.prefab;
+        }
+    }
+
+    private IEnumerator LoadContentFromApi(string qrCode)
+    {
+        string url = BuildUnitySceneUrl(qrCode);
+        Debug.Log("ARSceneController: consultando API: " + url);
+
+        using (UnityWebRequest request = UnityWebRequest.Get(url))
+        {
+            request.timeout = Mathf.Max(1, Mathf.RoundToInt(apiTimeoutSeconds));
+            yield return request.SendWebRequest();
+
+            if (request.result != UnityWebRequest.Result.Success)
+            {
+                Debug.LogWarning(
+                    "ARSceneController: error consultando API para QR " + qrCode +
+                    " result=" + request.result +
+                    " code=" + request.responseCode +
+                    " error=" + request.error
+                );
+
+                if (fallbackToLocalContent)
+                    ApplyLocalContent(qrCode);
+                else
+                    ApplyContent(CreateUnknownContent(qrCode));
+
+                yield break;
+            }
+
+            UnitySceneApiResponse apiScene = null;
+            try
+            {
+                apiScene = JsonUtility.FromJson<UnitySceneApiResponse>(request.downloadHandler.text);
+            }
+            catch (Exception exception)
+            {
+                Debug.LogWarning("ARSceneController: respuesta JSON invalida: " + exception.Message);
+            }
+
+            if (apiScene == null || string.IsNullOrWhiteSpace(apiScene.qr_code))
+            {
+                Debug.LogWarning("ARSceneController: API no devolvio una escena valida");
+
+                if (fallbackToLocalContent)
+                    ApplyLocalContent(qrCode);
+                else
+                    ApplyContent(CreateUnknownContent(qrCode));
+
+                yield break;
+            }
+
+            SceneContent apiContent = CreateContentFromApi(apiScene);
+            ApplyContent(apiContent);
+        }
+    }
+
+    private SceneContent CreateContentFromApi(UnitySceneApiResponse apiScene)
+    {
+        GameObject prefab = null;
+        if (!string.IsNullOrWhiteSpace(apiScene.prefab_key))
+            prefabByKey.TryGetValue(apiScene.prefab_key, out prefab);
+
+        string title = !string.IsNullOrWhiteSpace(apiScene.title)
+            ? apiScene.title
+            : apiScene.book_title + " - Escena " + apiScene.order;
+
+        return new SceneContent
+        {
+            qrCode = apiScene.qr_code,
+            title = title,
+            narration = apiScene.text,
+            prefabKey = apiScene.prefab_key,
+            prefab = prefab,
+            audioUrl = apiScene.audio_url
+        };
+    }
+
+    private IEnumerator LoadAudioFromUrl(string audioUrl)
+    {
+        Debug.Log("ARSceneController: descargando audio: " + audioUrl);
+
+        using (UnityWebRequest request = UnityWebRequestMultimedia.GetAudioClip(audioUrl, AudioType.UNKNOWN))
+        {
+            request.timeout = Mathf.Max(1, Mathf.RoundToInt(apiTimeoutSeconds));
+            yield return request.SendWebRequest();
+
+            if (request.result != UnityWebRequest.Result.Success)
+            {
+                Debug.LogWarning("ARSceneController: no se pudo descargar audio: " + request.error);
+                yield break;
+            }
+
+            AudioClip clip = DownloadHandlerAudioClip.GetContent(request);
+            if (clip == null)
+            {
+                Debug.LogWarning("ARSceneController: audio descargado invalido");
+                yield break;
+            }
+
+            audioSource.clip = clip;
+            audioSource.Play();
+        }
+    }
+
+    private void ApplyLocalContent(string qrCode)
+    {
+        if (!contentByCode.TryGetValue(qrCode, out selectedContent))
+        {
+            Debug.LogWarning("ARSceneController: no existe contenido local para QR: " + qrCode);
+            selectedContent = CreateUnknownContent(qrCode);
+        }
+
+        ApplyContent(selectedContent);
+    }
+
+    private string BuildUnitySceneUrl(string qrCode)
+    {
+        string baseUrl = string.IsNullOrWhiteSpace(apiBaseUrl)
+            ? "http://192.168.1.100:8000/api"
+            : apiBaseUrl.TrimEnd('/');
+
+        return baseUrl + "/unity/scenes/" + UnityWebRequest.EscapeURL(qrCode) + "/";
     }
 
     private void EnsureDefaultContents()
