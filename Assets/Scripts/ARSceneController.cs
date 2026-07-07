@@ -49,7 +49,7 @@ public class ARSceneController : MonoBehaviour
 
     [Header("API")]
     public bool loadContentFromApi = true;
-    public string apiBaseUrl = "http://192.168.1.100:8000/api";
+    public string apiBaseUrl = "http://192.168.1.48:8000/api";
     public float apiTimeoutSeconds = 10f;
     public bool fallbackToLocalContent = true;
 
@@ -326,7 +326,7 @@ public class ARSceneController : MonoBehaviour
     private string BuildUnitySceneUrl(string qrCode)
     {
         string baseUrl = string.IsNullOrWhiteSpace(apiBaseUrl)
-            ? "http://192.168.1.100:8000/api"
+            ? "http://192.168.1.48:8000/api"
             : apiBaseUrl.TrimEnd('/');
 
         return baseUrl + "/unity/scenes/" + UnityWebRequest.EscapeURL(qrCode) + "/";
