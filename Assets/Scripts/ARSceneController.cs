@@ -215,11 +215,34 @@ public class ARSceneController : MonoBehaviour
         string url = BuildUnitySceneUrl(qrCode);
         Debug.Log("ARSceneController: consultando API: " + url);
 
-        using (UnityWebRequest request = UnityWebRequest.Get(url))
-        {
-            request.timeout = Mathf.Max(1, Mathf.RoundToInt(apiTimeoutSeconds));
-            yield return request.SendWebRequest();
+        UnityWebRequest request = null;
+        UnityWebRequestAsyncOperation operation = null;
 
+        try
+        {
+            request = UnityWebRequest.Get(url);
+            request.timeout = Mathf.Max(1, Mathf.RoundToInt(apiTimeoutSeconds));
+            operation = request.SendWebRequest();
+        }
+        catch (Exception exception)
+        {
+            Debug.LogError("ARSceneController: excepcion iniciando request API: " + exception);
+
+            if (request != null)
+                request.Dispose();
+
+            if (fallbackToLocalContent)
+                ApplyLocalContent(qrCode);
+            else
+                ApplyContent(CreateUnknownContent(qrCode));
+
+            yield break;
+        }
+
+        yield return operation;
+
+        try
+        {
             if (request.result != UnityWebRequest.Result.Success)
             {
                 Debug.LogWarning(
@@ -261,6 +284,10 @@ public class ARSceneController : MonoBehaviour
 
             SceneContent apiContent = CreateContentFromApi(apiScene);
             ApplyContent(apiContent);
+        }
+        finally
+        {
+            request.Dispose();
         }
     }
 
