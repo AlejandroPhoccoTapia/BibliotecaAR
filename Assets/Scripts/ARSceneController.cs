@@ -62,6 +62,11 @@ public class ARSceneController : MonoBehaviour
     public float trackingImagePhysicalWidthMeters = 0.06f;
     public bool loadGlbModelFromApi = true;
 
+    [Header("Default Runtime GLB Placement")]
+    public float runtimeGlbScale = 0.02f;
+    public Vector3 runtimeGlbLocalOffset = new Vector3(0f, 0.005f, 0f);
+    public Vector3 runtimeGlbLocalEulerAngles = Vector3.zero;
+
     [Header("Optional UI")]
     public TMP_Text titleText;
     public TMP_Text narrationText;
@@ -393,10 +398,31 @@ public class ARSceneController : MonoBehaviour
 
         modelRoot.transform.localPosition = Vector3.zero;
         modelRoot.transform.localRotation = Quaternion.identity;
+        modelRoot.transform.localScale = Vector3.one * runtimeGlbScale;
         content.prefab = modelRoot;
 
+        ApplyRuntimeGlbPlacement();
         ApplyPrefabToPlacers(content, modelRoot, true);
         Debug.Log("ARSceneController: GLB runtime listo para QR: " + content.qrCode);
+    }
+
+    private void ApplyRuntimeGlbPlacement()
+    {
+        QRTrackedImagePlacer imagePlacer = FindAnyObjectByType<QRTrackedImagePlacer>();
+        if (imagePlacer == null)
+            return;
+
+        imagePlacer.localOffset = runtimeGlbLocalOffset;
+        imagePlacer.localEulerAngles = runtimeGlbLocalEulerAngles;
+
+        Debug.Log(
+            "ARSceneController: placement GLB runtime scale=" +
+            runtimeGlbScale +
+            " offset=" +
+            runtimeGlbLocalOffset +
+            " rotation=" +
+            runtimeGlbLocalEulerAngles
+        );
     }
 
     private IEnumerator LoadAudioFromUrl(string audioUrl)
