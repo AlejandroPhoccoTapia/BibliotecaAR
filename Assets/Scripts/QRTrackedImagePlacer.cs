@@ -41,6 +41,24 @@ public class QRTrackedImagePlacer : MonoBehaviour
             trackedImageManager.trackablesChanged.RemoveListener(OnTrackedImagesChanged);
     }
 
+    public void SetObjectToPlace(GameObject newObjectToPlace, bool clearExistingObjects)
+    {
+        objectToPlace = newObjectToPlace;
+
+        if (!clearExistingObjects)
+            return;
+
+        foreach (GameObject spawnedObject in spawnedObjects.Values)
+        {
+            if (spawnedObject != null)
+                Destroy(spawnedObject);
+        }
+
+        spawnedObjects.Clear();
+        spawnedObjectsByCode.Clear();
+        Debug.Log("QRTrackedImagePlacer: contenido AR reemplazado por " + (objectToPlace != null ? objectToPlace.name : "null"));
+    }
+
     private void OnTrackedImagesChanged(ARTrackablesChangedEventArgs<ARTrackedImage> args)
     {
         foreach (ARTrackedImage trackedImage in args.added)

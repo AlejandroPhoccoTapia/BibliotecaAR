@@ -1,6 +1,8 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Threading.Tasks;
+using GLTFast;
 using TMPro;
 using UnityEngine;
 using UnityEngine.Networking;
@@ -21,6 +23,7 @@ public class ARSceneController : MonoBehaviour
         public GameObject prefab;
         public AudioClip audioClip;
         public string audioUrl;
+        public string modelUrl;
     }
 
     [Serializable]
@@ -41,6 +44,7 @@ public class ARSceneController : MonoBehaviour
         public string prefab_key;
         public string cover_url;
         public string audio_url;
+        public string glb_model_url;
         public string qr_image_url;
     }
 
@@ -56,6 +60,7 @@ public class ARSceneController : MonoBehaviour
     public bool fallbackToLocalContent = true;
     public bool addTrackingImageFromApi = true;
     public float trackingImagePhysicalWidthMeters = 0.06f;
+    public bool loadGlbModelFromApi = true;
 
     [Header("Optional UI")]
     public TMP_Text titleText;
@@ -150,11 +155,11 @@ public class ARSceneController : MonoBehaviour
                 StartCoroutine(LoadAudioFromUrl(content.audioUrl));
         }
 
-        ARRaycastPlaceObject placer = FindAnyObjectByType<ARRaycastPlaceObject>();
         GameObject prefabToPlace = content.prefab != null
             ? content.prefab
             : fallbackPrefab;
 
+        ARRaycastPlaceObject placer = FindAnyObjectByType<ARRaycastPlaceObject>();
         if (prefabToPlace == null && placer != null)
             prefabToPlace = placer.objectToPlace;
 
@@ -164,6 +169,12 @@ public class ARSceneController : MonoBehaviour
             return;
         }
 
+        ApplyPrefabToPlacers(content, prefabToPlace, false);
+    }
+
+    private void ApplyPrefabToPlacers(SceneContent content, GameObject prefabToPlace, bool clearExistingTrackedObjects)
+    {
+        ARRaycastPlaceObject placer = FindAnyObjectByType<ARRaycastPlaceObject>();
         if (placer != null)
         {
             placer.objectToPlace = prefabToPlace;
@@ -177,7 +188,7 @@ public class ARSceneController : MonoBehaviour
         QRTrackedImagePlacer imagePlacer = FindAnyObjectByType<QRTrackedImagePlacer>();
         if (imagePlacer != null)
         {
-            imagePlacer.objectToPlace = prefabToPlace;
+            imagePlacer.SetObjectToPlace(prefabToPlace, clearExistingTrackedObjects);
             imagePlacer.targetQrCode = content.qrCode;
             imagePlacer.onlyShowScannedCode = true;
             Debug.Log("ARSceneController: prefab AR para QR seleccionado: " + prefabToPlace.name);
@@ -186,6 +197,28 @@ public class ARSceneController : MonoBehaviour
         {
             Debug.LogWarning("ARSceneController: no se encontro QRTrackedImagePlacer");
         }
+    }
+
+    private string GetTaskError(Task<bool> task)
+    {
+        if (task == null)
+            return "task null";
+
+        if (task.Exception != null)
+            return task.Exception.GetBaseException().Message;
+
+        return "resultado false";
+    }
+
+    private string SanitizeName(string rawName)
+    {
+        if (string.IsNullOrWhiteSpace(rawName))
+            return "sin_codigo";
+
+        foreach (char invalidChar in System.IO.Path.GetInvalidFileNameChars())
+            rawName = rawName.Replace(invalidChar, '_');
+
+        return rawName;
     }
 
     private void BuildContentDictionary()
@@ -289,6 +322,9 @@ public class ARSceneController : MonoBehaviour
             SceneContent apiContent = CreateContentFromApi(apiScene);
             ApplyContent(apiContent);
 
+            if (loadGlbModelFromApi)
+                yield return LoadGltfModelFromUrl(apiContent);
+
             if (addTrackingImageFromApi)
                 yield return AddTrackingImageFromApi(apiScene);
         }
@@ -315,8 +351,52 @@ public class ARSceneController : MonoBehaviour
             narration = apiScene.text,
             prefabKey = apiScene.prefab_key,
             prefab = prefab,
-            audioUrl = apiScene.audio_url
+            audioUrl = apiScene.audio_url,
+            modelUrl = apiScene.glb_model_url
         };
+    }
+
+    private IEnumerator LoadGltfModelFromUrl(SceneContent content)
+    {
+        if (content == null || string.IsNullOrWhiteSpace(content.modelUrl))
+        {
+            Debug.Log("ARSceneController: API no envio glb_model_url, usando prefab local/fallback");
+            yield break;
+        }
+
+        Debug.Log("ARSceneController: cargando GLB runtime: " + content.modelUrl);
+
+        GltfImport gltfImport = new GltfImport();
+        Task<bool> loadTask = gltfImport.Load(content.modelUrl);
+        while (!loadTask.IsCompleted)
+            yield return null;
+
+        if (loadTask.IsFaulted || !loadTask.Result)
+        {
+            Debug.LogWarning("ARSceneController: no se pudo cargar GLB runtime: " + GetTaskError(loadTask));
+            yield break;
+        }
+
+        GameObject modelRoot = new GameObject("RuntimeGLB_" + SanitizeName(content.qrCode));
+        modelRoot.SetActive(false);
+
+        Task<bool> instantiateTask = gltfImport.InstantiateMainSceneAsync(modelRoot.transform);
+        while (!instantiateTask.IsCompleted)
+            yield return null;
+
+        if (instantiateTask.IsFaulted || !instantiateTask.Result)
+        {
+            Debug.LogWarning("ARSceneController: no se pudo instanciar GLB runtime: " + GetTaskError(instantiateTask));
+            Destroy(modelRoot);
+            yield break;
+        }
+
+        modelRoot.transform.localPosition = Vector3.zero;
+        modelRoot.transform.localRotation = Quaternion.identity;
+        content.prefab = modelRoot;
+
+        ApplyPrefabToPlacers(content, modelRoot, true);
+        Debug.Log("ARSceneController: GLB runtime listo para QR: " + content.qrCode);
     }
 
     private IEnumerator LoadAudioFromUrl(string audioUrl)
