@@ -97,7 +97,7 @@ GET <apiBaseUrl>/unity/scenes/<qr_code>/
 
 Escapa el código para la URL. Convierte la respuesta en `SceneContent` y aplica título, texto, audio y prefab local disponible. Después intenta cargar GLB remoto y añadir la imagen QR a la biblioteca de seguimiento.
 
-La pantalla indica búsqueda, preparación, errores de red, código inexistente/no publicado y fallos del modelo, con reintento para operaciones recuperables. Si falla la API y hay contenido local con el mismo código, lo muestra avisando que es una copia de demostración. El texto narrativo se desplaza; el audio tiene botones explícitos para reproducir y pausar y no empieza sin acción del usuario. La interfaz usa el área segura y cambia el tamaño con la resolución.
+La pantalla indica búsqueda, preparación, errores de red, código inexistente/no publicado y fallos del modelo, con reintento para operaciones recuperables. Si falla la API y hay contenido local con el mismo código, lo muestra avisando que es una copia de demostración. La lectura aparece en una tarjeta clara de alto contraste que se puede plegar con «Ocultar» y volver a abrir con «Leer» para dejar más espacio a la cámara. El texto se desplaza y la indicación de deslizamiento solo aparece cuando hay contenido fuera de la vista. El audio muestra botones con iconos para reproducir y pausar cuando existe un clip; no empieza sin acción del usuario. La interfaz usa el área segura y adapta la distribución vertical u horizontal.
 
 Si falla la API o el JSON y `fallbackToLocalContent` está activo, busca contenido local. Ante código desconocido muestra «Contenido no encontrado». El fallback no es una caché persistente: solo conoce los datos/prefabs locales incluidos.
 

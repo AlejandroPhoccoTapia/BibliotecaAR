@@ -13,8 +13,13 @@ public sealed class ARSceneExperienceUI : MonoBehaviour
         Error
     }
 
-    private static readonly Color PanelColor = new Color(0.025f, 0.055f, 0.09f, 0.9f);
-    private static readonly Color AccentColor = new Color(0.12f, 0.72f, 0.88f, 1f);
+    private static readonly Color PanelColor = new Color(0.985f, 0.991f, 0.991f, 0.97f);
+    private static readonly Color InkColor = new Color(0.075f, 0.14f, 0.20f, 1f);
+    private static readonly Color MutedColor = new Color(0.39f, 0.46f, 0.51f, 1f);
+    private static readonly Color AccentColor = new Color(0.02f, 0.43f, 0.49f, 1f);
+    private static Sprite roundedSprite;
+    private static Sprite playSprite;
+    private static Sprite pauseSprite;
 
     private TMP_Text titleText;
     private TMP_Text narrationText;
@@ -25,14 +30,24 @@ public sealed class ARSceneExperienceUI : MonoBehaviour
 
     private RectTransform safeArea;
     private RectTransform narrationPanel;
+    private RectTransform panelShadow;
     private RectTransform statusPanel;
+    private RectTransform narrationViewport;
     private TMP_Text statusText;
+    private TMP_Text sectionLabel;
+    private TMP_Text scrollHintText;
     private Button retryButton;
     private Button playButton;
     private Button pauseButton;
+    private Button expandButton;
     private TMP_Text playButtonText;
+    private TMP_Text pauseButtonText;
+    private TMP_Text expandButtonText;
+    private Image playIcon;
+    private Image pauseIcon;
     private bool audioAvailable;
     private bool audioLoading;
+    private bool isExpanded = true;
     private Rect lastSafeArea;
     private Vector2 lastScreenSize;
     private bool lastAudioPlaying;
@@ -77,20 +92,31 @@ public sealed class ARSceneExperienceUI : MonoBehaviour
         Transform panelTransform = safeArea != null ? safeArea.Find("BottomNarrationPanel") : null;
         narrationPanel = panelTransform as RectTransform;
         ConfigureSafeArea();
-        ConfigureTitle();
-        ConfigureRescanButton();
         ConfigureNarrationPanel();
+        ConfigureTitle();
+        if (titleText != null)
+            titleText.text = "Preparando lectura";
+        if (narrationText != null)
+            narrationText.text = "Un momento, estamos cargando el capítulo.";
+        ConfigureRescanButton();
+        BuildCardHeader();
         BuildStatusBanner();
         BuildNarrationScrollView();
         BuildAudioControls();
         BuildRetryButton();
+        LayoutChrome();
         SetAudioAvailable(false);
     }
 
     private void Update()
     {
         if (safeArea != null && (lastSafeArea != Screen.safeArea || lastScreenSize != new Vector2(Screen.width, Screen.height)))
+        {
             ConfigureSafeArea();
+            ConfigureNarrationPanel();
+            LayoutChrome();
+            RefreshScrollHint();
+        }
 
         bool isPlaying = audioAvailable && audioSource != null && audioSource.isPlaying;
         if (isPlaying != lastAudioPlaying)
@@ -107,10 +133,10 @@ public sealed class ARSceneExperienceUI : MonoBehaviour
             statusText.text = message;
             statusText.color = tone switch
             {
-                MessageTone.Success => new Color(0.55f, 1f, 0.72f, 1f),
-                MessageTone.Warning => new Color(1f, 0.82f, 0.42f, 1f),
-                MessageTone.Error => new Color(1f, 0.55f, 0.5f, 1f),
-                _ => Color.white
+                MessageTone.Success => new Color(0.03f, 0.48f, 0.32f, 1f),
+                MessageTone.Warning => new Color(0.62f, 0.35f, 0.03f, 1f),
+                MessageTone.Error => new Color(0.73f, 0.18f, 0.17f, 1f),
+                _ => InkColor
             };
         }
 
@@ -120,7 +146,7 @@ public sealed class ARSceneExperienceUI : MonoBehaviour
             if (background != null)
             {
                 background.color = tone == MessageTone.Error
-                    ? new Color(0.18f, 0.045f, 0.05f, 0.94f)
+                    ? new Color(1f, 0.95f, 0.94f, 0.98f)
                     : PanelColor;
             }
         }
@@ -153,10 +179,12 @@ public sealed class ARSceneExperienceUI : MonoBehaviour
         if (narrationText == null)
             return;
 
+        SetExpanded(true);
         Canvas.ForceUpdateCanvases();
         ScrollRect scrollRect = narrationText.GetComponentInParent<ScrollRect>();
         if (scrollRect != null)
             scrollRect.verticalNormalizedPosition = 1f;
+        RefreshScrollHint();
     }
 
     public void HandleTrackingState(bool isTracking)
@@ -186,17 +214,18 @@ public sealed class ARSceneExperienceUI : MonoBehaviour
         if (titleText == null)
             return;
 
-        if (safeArea != null)
+        if (narrationPanel != null)
         {
-            titleText.transform.SetParent(safeArea, false);
-            SetStretch(titleText.rectTransform, new Vector2(0.04f, 0.92f), new Vector2(0.67f, 0.99f));
+            titleText.transform.SetParent(narrationPanel, false);
+            SetStretch(titleText.rectTransform, new Vector2(0.06f, 0.65f), new Vector2(0.73f, 0.81f));
         }
 
-        titleText.fontSize = 38f;
+        titleText.fontSize = 56f;
         titleText.enableAutoSizing = true;
-        titleText.fontSizeMin = 24f;
-        titleText.fontSizeMax = 42f;
-        titleText.color = Color.white;
+        titleText.fontSizeMin = 34f;
+        titleText.fontSizeMax = 58f;
+        titleText.fontStyle = FontStyles.Bold;
+        titleText.color = InkColor;
         titleText.enableWordWrapping = true;
         titleText.alignment = TextAlignmentOptions.Left;
         titleText.raycastTarget = false;
@@ -211,23 +240,31 @@ public sealed class ARSceneExperienceUI : MonoBehaviour
 
         if (safeArea != null)
             buttonTransform.SetParent(safeArea, false);
+        if (topBar != null)
+        {
+            Image oldTopBarImage = topBar.GetComponent<Image>();
+            if (oldTopBarImage != null)
+                oldTopBarImage.raycastTarget = false;
+        }
 
         RectTransform rect = buttonTransform as RectTransform;
         if (rect != null)
-            SetStretch(rect, new Vector2(0.70f, 0.92f), new Vector2(0.96f, 0.99f));
+            SetStretch(rect, new Vector2(0.64f, 0.925f), new Vector2(0.975f, 0.99f));
 
         Image background = buttonTransform.GetComponent<Image>();
         if (background != null)
-            background.color = new Color(0.06f, 0.15f, 0.21f, 0.96f);
+            StyleRounded(background, new Color(1f, 1f, 1f, 0.96f));
 
         TMP_Text label = buttonTransform.GetComponentInChildren<TMP_Text>();
         if (label != null)
         {
             label.text = "Escanear otro QR";
-            label.fontSize = 25f;
+            label.fontSize = 34f;
             label.enableAutoSizing = true;
-            label.fontSizeMin = 19f;
-            label.fontSizeMax = 26f;
+            label.fontSizeMin = 26f;
+            label.fontSizeMax = 36f;
+            label.fontStyle = FontStyles.Bold;
+            label.color = InkColor;
             label.alignment = TextAlignmentOptions.Center;
             label.raycastTarget = false;
         }
@@ -238,17 +275,62 @@ public sealed class ARSceneExperienceUI : MonoBehaviour
         if (narrationPanel == null)
             return;
 
-        narrationPanel.anchorMin = new Vector2(0.035f, 0.015f);
-        narrationPanel.anchorMax = new Vector2(0.965f, 0.31f);
-        narrationPanel.pivot = new Vector2(0.5f, 0f);
-        narrationPanel.anchoredPosition = Vector2.zero;
-        narrationPanel.sizeDelta = Vector2.zero;
+        bool landscape = Screen.width > Screen.height;
+        Vector2 min = landscape
+            ? isExpanded ? new Vector2(0.53f, 0.03f) : new Vector2(0.64f, 0.03f)
+            : new Vector2(0.025f, 0.015f);
+        Vector2 max = landscape
+            ? isExpanded ? new Vector2(0.985f, 0.97f) : new Vector2(0.985f, 0.29f)
+            : isExpanded ? new Vector2(0.975f, 0.40f) : new Vector2(0.975f, 0.14f);
+        SetStretch(narrationPanel, min, max);
 
         Image background = narrationPanel.GetComponent<Image>();
         if (background != null)
         {
-            background.color = PanelColor;
+            StyleRounded(background, PanelColor);
             background.raycastTarget = false;
+        }
+
+        if (safeArea != null && panelShadow == null)
+        {
+            panelShadow = CreatePanel("ReadingSheetShadow", safeArea);
+            panelShadow.GetComponent<Image>().color = new Color(0f, 0.07f, 0.1f, 0.20f);
+            panelShadow.SetSiblingIndex(narrationPanel.GetSiblingIndex());
+        }
+
+        if (panelShadow != null)
+        {
+            SetStretch(panelShadow, min, max);
+            panelShadow.anchoredPosition = new Vector2(0f, -12f);
+        }
+    }
+
+    private void BuildCardHeader()
+    {
+        if (narrationPanel == null)
+            return;
+
+        RectTransform handle = CreatePanel("ReadingSheetHandle", narrationPanel);
+        handle.GetComponent<Image>().color = new Color(0.76f, 0.81f, 0.83f, 1f);
+        SetStretch(handle, new Vector2(0.43f, 0.955f), new Vector2(0.57f, 0.97f));
+
+        sectionLabel = CreateText("ReadingSectionLabel", narrationPanel, "CAPÍTULO", 28f);
+        sectionLabel.fontStyle = FontStyles.Bold;
+        sectionLabel.characterSpacing = 3f;
+        sectionLabel.color = AccentColor;
+        sectionLabel.alignment = TextAlignmentOptions.Left;
+        SetStretch(sectionLabel.rectTransform, new Vector2(0.06f, 0.82f), new Vector2(0.55f, 0.93f));
+
+        expandButton = CreateButton("ToggleReadingButton", "Ocultar", narrationPanel,
+            new Vector2(0.75f, 0.70f), new Vector2(0.94f, 0.88f), () => SetExpanded(!isExpanded));
+        expandButton.GetComponent<Image>().color = new Color(0.88f, 0.95f, 0.95f, 1f);
+        expandButtonText = expandButton.GetComponentInChildren<TMP_Text>();
+        if (expandButtonText != null)
+        {
+            expandButtonText.color = AccentColor;
+            expandButtonText.fontSize = 32f;
+            expandButtonText.fontSizeMin = 25f;
+            expandButtonText.fontSizeMax = 34f;
         }
     }
 
@@ -258,14 +340,15 @@ public sealed class ARSceneExperienceUI : MonoBehaviour
             return;
 
         statusPanel = CreatePanel("ARStatusPanel", safeArea);
-        SetStretch(statusPanel, new Vector2(0.04f, 0.79f), new Vector2(0.96f, 0.91f));
+        SetStretch(statusPanel, new Vector2(0.035f, 0.82f), new Vector2(0.965f, 0.91f));
         statusPanel.GetComponent<Image>().color = PanelColor;
-        statusText = CreateText("ARStatusText", statusPanel, "Preparando la realidad aumentada…", 31f);
+        statusText = CreateText("ARStatusText", statusPanel, "Preparando la realidad aumentada…", 37f);
         SetStretch(statusText.rectTransform, Vector2.zero, Vector2.one);
-        statusText.margin = new Vector4(24f, 14f, 24f, 14f);
+        statusText.margin = new Vector4(36f, 14f, 36f, 14f);
         statusText.enableAutoSizing = true;
-        statusText.fontSizeMin = 22f;
-        statusText.fontSizeMax = 34f;
+        statusText.fontSizeMin = 28f;
+        statusText.fontSizeMax = 39f;
+        statusText.color = InkColor;
         statusText.alignment = TextAlignmentOptions.Center;
     }
 
@@ -279,7 +362,8 @@ public sealed class ARSceneExperienceUI : MonoBehaviour
         viewportObject.transform.SetParent(narrationPanel, false);
 
         RectTransform viewportRect = viewportObject.GetComponent<RectTransform>();
-        SetStretch(viewportRect, new Vector2(0.055f, 0.31f), new Vector2(0.945f, 0.91f));
+        narrationViewport = viewportRect;
+        SetStretch(viewportRect, new Vector2(0.06f, 0.315f), new Vector2(0.94f, 0.64f));
 
         Image viewportImage = viewportObject.GetComponent<Image>();
         viewportImage.color = new Color(1f, 1f, 1f, 0.025f);
@@ -294,13 +378,16 @@ public sealed class ARSceneExperienceUI : MonoBehaviour
         textRect.pivot = new Vector2(0.5f, 1f);
         textRect.anchoredPosition = Vector2.zero;
         textRect.sizeDelta = Vector2.zero;
-        narrationText.fontSize = 31f;
+        narrationText.fontSize = 46f;
         narrationText.enableAutoSizing = false;
-        narrationText.color = new Color(0.94f, 0.96f, 0.98f, 1f);
+        narrationText.color = InkColor;
+        narrationText.fontStyle = FontStyles.Normal;
         narrationText.enableWordWrapping = true;
         narrationText.overflowMode = TextOverflowModes.Overflow;
         narrationText.alignment = TextAlignmentOptions.TopLeft;
-        narrationText.margin = new Vector4(8f, 8f, 8f, 18f);
+        narrationText.lineSpacing = 8f;
+        narrationText.paragraphSpacing = 10f;
+        narrationText.margin = new Vector4(4f, 4f, 4f, 12f);
         narrationText.raycastTarget = false;
 
         ContentSizeFitter contentFitter = narrationText.GetComponent<ContentSizeFitter>();
@@ -316,14 +403,14 @@ public sealed class ARSceneExperienceUI : MonoBehaviour
         scrollRect.vertical = true;
         scrollRect.movementType = ScrollRect.MovementType.Clamped;
         scrollRect.inertia = true;
-        scrollRect.scrollSensitivity = 36f;
+        scrollRect.scrollSensitivity = 48f;
 
-        TMP_Text scrollHintText = CreateText("NarrationScrollHint", narrationPanel, "Desliza para leer todo el texto", 20f);
-        SetStretch(scrollHintText.rectTransform, new Vector2(0.12f, 0.265f), new Vector2(0.88f, 0.315f));
-        scrollHintText.color = new Color(0.69f, 0.78f, 0.83f, 1f);
+        scrollHintText = CreateText("NarrationScrollHint", narrationPanel, "Desliza para seguir leyendo", 27f);
+        SetStretch(scrollHintText.rectTransform, new Vector2(0.12f, 0.255f), new Vector2(0.88f, 0.305f));
+        scrollHintText.color = MutedColor;
         scrollHintText.enableAutoSizing = true;
-        scrollHintText.fontSizeMin = 15f;
-        scrollHintText.fontSizeMax = 20f;
+        scrollHintText.fontSizeMin = 22f;
+        scrollHintText.fontSizeMax = 29f;
         scrollHintText.alignment = TextAlignmentOptions.Center;
     }
 
@@ -332,12 +419,22 @@ public sealed class ARSceneExperienceUI : MonoBehaviour
         if (narrationPanel == null)
             return;
 
-        playButton = CreateButton("PlayNarrationButton", "Reproducir audio", narrationPanel,
-            new Vector2(0.055f, 0.055f), new Vector2(0.485f, 0.25f), () => playAudio?.Invoke());
+        playButton = CreateButton("PlayNarrationButton", "Escuchar audio", narrationPanel,
+            new Vector2(0.055f, 0.06f), new Vector2(0.485f, 0.235f), () => playAudio?.Invoke());
         pauseButton = CreateButton("PauseNarrationButton", "Pausar audio", narrationPanel,
-            new Vector2(0.515f, 0.055f), new Vector2(0.945f, 0.25f), () => pauseAudio?.Invoke());
+            new Vector2(0.515f, 0.06f), new Vector2(0.945f, 0.235f), () => pauseAudio?.Invoke());
 
         playButtonText = playButton.GetComponentInChildren<TMP_Text>();
+        pauseButtonText = pauseButton.GetComponentInChildren<TMP_Text>();
+        playIcon = CreateAudioIcon("PlayIcon", playButton.transform, GetAudioGlyph(true), Color.white);
+        pauseIcon = CreateAudioIcon("PauseIcon", pauseButton.transform, GetAudioGlyph(false), AccentColor);
+        if (playButtonText != null)
+            SetStretch(playButtonText.rectTransform, new Vector2(0.20f, 0f), Vector2.one);
+        if (pauseButtonText != null)
+            SetStretch(pauseButtonText.rectTransform, new Vector2(0.20f, 0f), Vector2.one);
+        pauseButton.GetComponent<Image>().color = new Color(0.88f, 0.95f, 0.95f, 1f);
+        if (pauseButtonText != null)
+            pauseButtonText.color = AccentColor;
         RefreshAudioControls();
     }
 
@@ -347,7 +444,7 @@ public sealed class ARSceneExperienceUI : MonoBehaviour
             return;
 
         retryButton = CreateButton("RetryContentButton", "Reintentar carga", safeArea,
-            new Vector2(0.24f, 0.71f), new Vector2(0.76f, 0.77f), () => retryContent?.Invoke());
+            new Vector2(0.24f, 0.745f), new Vector2(0.76f, 0.81f), () => retryContent?.Invoke());
         retryButton.gameObject.SetActive(false);
     }
 
@@ -357,7 +454,7 @@ public sealed class ARSceneExperienceUI : MonoBehaviour
         panelObject.layer = parent.gameObject.layer;
         panelObject.transform.SetParent(parent, false);
         Image image = panelObject.GetComponent<Image>();
-        image.color = PanelColor;
+        StyleRounded(image, PanelColor);
         image.raycastTarget = false;
         return panelObject.GetComponent<RectTransform>();
     }
@@ -371,29 +468,31 @@ public sealed class ARSceneExperienceUI : MonoBehaviour
         RectTransform buttonRect = buttonObject.GetComponent<RectTransform>();
         SetStretch(buttonRect, anchorMin, anchorMax);
         Image image = buttonObject.GetComponent<Image>();
-        image.color = new Color(0.06f, 0.15f, 0.21f, 1f);
+        StyleRounded(image, AccentColor);
 
         Button button = buttonObject.GetComponent<Button>();
         button.targetGraphic = image;
         button.transition = Selectable.Transition.ColorTint;
         button.colors = new ColorBlock
         {
-            normalColor = image.color,
-            highlightedColor = new Color(0.09f, 0.25f, 0.32f, 1f),
-            pressedColor = AccentColor,
-            selectedColor = new Color(0.09f, 0.25f, 0.32f, 1f),
-            disabledColor = new Color(0.13f, 0.16f, 0.18f, 0.8f),
+            normalColor = Color.white,
+            highlightedColor = new Color(0.88f, 0.97f, 0.97f, 1f),
+            pressedColor = new Color(0.74f, 0.90f, 0.90f, 1f),
+            selectedColor = Color.white,
+            disabledColor = new Color(1f, 1f, 1f, 0.52f),
             colorMultiplier = 1f,
             fadeDuration = 0.12f
         };
         button.onClick.AddListener(() => onClick?.Invoke());
 
-        TMP_Text text = CreateText(objectName + "Label", buttonObject.transform, label, 27f);
+        TMP_Text text = CreateText(objectName + "Label", buttonObject.transform, label, 35f);
         SetStretch(text.rectTransform, Vector2.zero, Vector2.one);
-        text.margin = new Vector4(10f, 4f, 10f, 4f);
+        text.margin = new Vector4(14f, 8f, 14f, 8f);
         text.enableAutoSizing = true;
-        text.fontSizeMin = 19f;
-        text.fontSizeMax = 29f;
+        text.fontSizeMin = 26f;
+        text.fontSizeMax = 38f;
+        text.fontStyle = FontStyles.Bold;
+        text.color = Color.white;
         text.alignment = TextAlignmentOptions.Center;
         text.raycastTarget = false;
         return button;
@@ -412,7 +511,7 @@ public sealed class ARSceneExperienceUI : MonoBehaviour
         text.font = font;
         text.text = initialText;
         text.fontSize = fontSize;
-        text.color = Color.white;
+        text.color = InkColor;
         text.enableWordWrapping = true;
         text.raycastTarget = false;
         return text;
@@ -422,20 +521,204 @@ public sealed class ARSceneExperienceUI : MonoBehaviour
     {
         bool hasClip = audioAvailable && audioSource != null && audioSource.clip != null;
         bool playing = hasClip && audioSource.isPlaying;
+        bool showAudio = audioLoading || hasClip;
         lastAudioPlaying = playing;
 
         if (playButton != null)
         {
+            playButton.gameObject.SetActive(isExpanded && showAudio);
             playButton.interactable = hasClip && !playing;
+            SetStretch(playButton.transform as RectTransform,
+                new Vector2(0.055f, 0.06f),
+                hasClip ? new Vector2(0.485f, 0.235f) : new Vector2(0.945f, 0.235f));
             if (playButtonText != null)
             {
                 bool paused = hasClip && !playing && audioSource.time > 0f && audioSource.time < audioSource.clip.length;
-                playButtonText.text = audioLoading ? "Cargando audio…" : hasClip ? paused ? "Continuar audio" : "Reproducir audio" : "Audio no disponible";
+                playButtonText.text = audioLoading ? "Preparando audio…" : hasClip ? paused ? "Continuar audio" : "Escuchar audio" : "Audio no disponible";
+                playButtonText.color = hasClip ? Color.white : InkColor;
             }
         }
 
+        if (playIcon != null)
+            playIcon.gameObject.SetActive(hasClip);
+
         if (pauseButton != null)
+        {
+            pauseButton.gameObject.SetActive(isExpanded && hasClip);
             pauseButton.interactable = playing;
+        }
+        if (pauseIcon != null)
+            pauseIcon.color = playing ? AccentColor : MutedColor;
+
+        if (narrationViewport != null)
+            SetStretch(narrationViewport,
+                new Vector2(0.06f, showAudio ? 0.315f : 0.12f),
+                new Vector2(0.94f, 0.64f));
+        if (scrollHintText != null)
+            SetStretch(scrollHintText.rectTransform,
+                new Vector2(0.12f, showAudio ? 0.255f : 0.06f),
+                new Vector2(0.88f, showAudio ? 0.305f : 0.11f));
+        RefreshScrollHint();
+    }
+
+    private void SetExpanded(bool expanded)
+    {
+        if (isExpanded == expanded)
+            return;
+
+        isExpanded = expanded;
+        ConfigureNarrationPanel();
+
+        if (titleText != null)
+            SetStretch(titleText.rectTransform,
+                expanded ? new Vector2(0.06f, 0.65f) : new Vector2(0.06f, 0.16f),
+                expanded ? new Vector2(0.73f, 0.81f) : new Vector2(0.72f, 0.75f));
+
+        if (sectionLabel != null)
+            sectionLabel.gameObject.SetActive(expanded);
+        if (narrationViewport != null)
+            narrationViewport.gameObject.SetActive(expanded);
+
+        if (expandButton != null)
+            SetStretch(expandButton.transform as RectTransform,
+                expanded ? new Vector2(0.75f, 0.70f) : new Vector2(0.75f, 0.21f),
+                expanded ? new Vector2(0.94f, 0.88f) : new Vector2(0.94f, 0.78f));
+        if (expandButtonText != null)
+            expandButtonText.text = expanded ? "Ocultar" : "Leer";
+
+        RefreshAudioControls();
+    }
+
+    private void LayoutChrome()
+    {
+        if (safeArea == null)
+            return;
+
+        bool landscape = Screen.width > Screen.height;
+        RectTransform rescanRect = safeArea.Find("RescanButton") as RectTransform;
+        if (rescanRect != null)
+            SetStretch(rescanRect,
+                landscape ? new Vector2(0.035f, 0.88f) : new Vector2(0.64f, 0.925f),
+                landscape ? new Vector2(0.36f, 0.985f) : new Vector2(0.975f, 0.99f));
+
+        if (statusPanel != null)
+            SetStretch(statusPanel,
+                landscape ? new Vector2(0.035f, 0.70f) : new Vector2(0.035f, 0.82f),
+                landscape ? new Vector2(0.49f, 0.86f) : new Vector2(0.965f, 0.91f));
+
+        if (retryButton != null)
+            SetStretch(retryButton.transform as RectTransform,
+                landscape ? new Vector2(0.035f, 0.54f) : new Vector2(0.24f, 0.745f),
+                landscape ? new Vector2(0.38f, 0.675f) : new Vector2(0.76f, 0.81f));
+    }
+
+    private void RefreshScrollHint()
+    {
+        if (scrollHintText == null)
+            return;
+
+        Canvas.ForceUpdateCanvases();
+        bool hasOverflow = isExpanded && narrationText != null && narrationViewport != null &&
+            narrationText.preferredHeight > narrationViewport.rect.height + 16f;
+        scrollHintText.gameObject.SetActive(hasOverflow);
+    }
+
+    private Image CreateAudioIcon(string name, Transform parent, Sprite sprite, Color color)
+    {
+        GameObject iconObject = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+        iconObject.layer = parent.gameObject.layer;
+        iconObject.transform.SetParent(parent, false);
+        RectTransform rect = iconObject.GetComponent<RectTransform>();
+        SetStretch(rect, new Vector2(0.08f, 0.24f), new Vector2(0.19f, 0.76f));
+        Image icon = iconObject.GetComponent<Image>();
+        icon.sprite = sprite;
+        icon.color = color;
+        icon.preserveAspect = true;
+        icon.raycastTarget = false;
+        return icon;
+    }
+
+    private static Sprite GetAudioGlyph(bool play)
+    {
+        Sprite cached = play ? playSprite : pauseSprite;
+        if (cached != null)
+            return cached;
+
+        const int size = 32;
+        Texture2D texture = new Texture2D(size, size, TextureFormat.RGBA32, false);
+        texture.name = play ? "AR play icon" : "AR pause icon";
+        texture.wrapMode = TextureWrapMode.Clamp;
+        texture.filterMode = FilterMode.Bilinear;
+        texture.hideFlags = HideFlags.HideAndDontSave;
+        Color32[] pixels = new Color32[size * size];
+
+        for (int y = 0; y < size; y++)
+        {
+            for (int x = 0; x < size; x++)
+            {
+                bool filled = play
+                    ? x >= 8 && x <= 25 && Mathf.Abs(y - 16f) <= 11f * (25f - x) / 17f
+                    : y >= 5 && y <= 27 && ((x >= 8 && x <= 13) || (x >= 19 && x <= 24));
+                pixels[y * size + x] = filled
+                    ? new Color32(255, 255, 255, 255)
+                    : new Color32(255, 255, 255, 0);
+            }
+        }
+
+        texture.SetPixels32(pixels);
+        texture.Apply(false, false);
+        Sprite sprite = Sprite.Create(texture, new Rect(0f, 0f, size, size), new Vector2(0.5f, 0.5f));
+        sprite.name = texture.name;
+        sprite.hideFlags = HideFlags.HideAndDontSave;
+        if (play)
+            playSprite = sprite;
+        else
+            pauseSprite = sprite;
+        return sprite;
+    }
+
+    private static void StyleRounded(Image image, Color color)
+    {
+        image.sprite = GetRoundedSprite();
+        image.type = Image.Type.Sliced;
+        image.color = color;
+    }
+
+    private static Sprite GetRoundedSprite()
+    {
+        if (roundedSprite != null)
+            return roundedSprite;
+
+        const int size = 64;
+        const float radius = 18f;
+        Texture2D texture = new Texture2D(size, size, TextureFormat.RGBA32, false);
+        texture.name = "AR UI rounded corners";
+        texture.wrapMode = TextureWrapMode.Clamp;
+        texture.filterMode = FilterMode.Bilinear;
+        texture.hideFlags = HideFlags.HideAndDontSave;
+        Color32[] pixels = new Color32[size * size];
+
+        for (int y = 0; y < size; y++)
+        {
+            for (int x = 0; x < size; x++)
+            {
+                float dx = Mathf.Abs(x - (size - 1) * 0.5f) - (size * 0.5f - radius);
+                float dy = Mathf.Abs(y - (size - 1) * 0.5f) - (size * 0.5f - radius);
+                float outside = Mathf.Sqrt(Mathf.Max(dx, 0f) * Mathf.Max(dx, 0f) + Mathf.Max(dy, 0f) * Mathf.Max(dy, 0f));
+                float signedDistance = outside + Mathf.Min(Mathf.Max(dx, dy), 0f) - radius;
+                byte alpha = (byte)Mathf.RoundToInt(255f * Mathf.Clamp01(0.5f - signedDistance));
+                pixels[y * size + x] = new Color32(255, 255, 255, alpha);
+            }
+        }
+
+        texture.SetPixels32(pixels);
+        texture.Apply(false, false);
+        roundedSprite = Sprite.Create(texture, new Rect(0f, 0f, size, size),
+            new Vector2(0.5f, 0.5f), 100f, 0, SpriteMeshType.FullRect,
+            new Vector4(20f, 20f, 20f, 20f));
+        roundedSprite.name = "AR UI rounded sprite";
+        roundedSprite.hideFlags = HideFlags.HideAndDontSave;
+        return roundedSprite;
     }
 
     private static void SetStretch(RectTransform rect, Vector2 anchorMin, Vector2 anchorMax)
