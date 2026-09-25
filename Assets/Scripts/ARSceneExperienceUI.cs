@@ -222,6 +222,15 @@ public sealed class ARSceneExperienceUI : MonoBehaviour
         SetExpanded(expanded);
     }
 
+    public void SetTeacherAdjustmentOpen(bool open)
+    {
+        SetExpanded(false);
+        if (narrationPanel != null)
+            narrationPanel.gameObject.SetActive(!open);
+        if (panelShadow != null)
+            panelShadow.gameObject.SetActive(!open);
+    }
+
     private void ConfigureSafeArea()
     {
         if (safeArea == null || Screen.width <= 0 || Screen.height <= 0)

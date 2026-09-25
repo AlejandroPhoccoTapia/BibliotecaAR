@@ -7,12 +7,22 @@ public sealed class ARPlacementEditorUI : MonoBehaviour
 {
     private static readonly Color Ink = new Color(0.08f, 0.15f, 0.20f);
     private static readonly Color Teal = new Color(0.02f, 0.43f, 0.49f);
+    private static readonly Color Slate = new Color(0.37f, 0.48f, 0.52f);
+    private static readonly string[] FieldLabels = {
+        "Marcador", "Tamaño del modelo", "Derecha / izquierda", "Altura", "Sobre la página", "Giro"
+    };
+    private static readonly float[] FieldSteps = { 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 5f };
+
     private RectTransform panel;
     private Button toggleButton;
     private TMP_Text toggleLabel;
+    private TMP_Text fieldLabel;
+    private TMP_Text valueLabel;
     private TMP_Text feedback;
-    private readonly TMP_Text[] values = new TMP_Text[6];
+    private readonly float[] values = new float[6];
+    private int selectedField = 1;
     private bool open;
+    private bool? lastLandscape;
     private Action<int, float> adjust;
     private Action save;
     private Action reset;
@@ -34,37 +44,39 @@ public sealed class ARPlacementEditorUI : MonoBehaviour
             new Vector2(0.77f, 0.745f), new Vector2(0.97f, 0.81f), Teal, Toggle);
         toggleLabel = toggleButton.GetComponentInChildren<TMP_Text>();
 
-        panel = MakePanel("TeacherPlacementPanel", parent, new Vector2(0.035f, 0.155f),
-            new Vector2(0.965f, 0.74f));
-        MakeText("Heading", panel, "AJUSTE SOBRE LA PÁGINA", 31f,
-            new Vector2(0.05f, 0.90f), new Vector2(0.95f, 0.99f), TextAlignmentOptions.Left);
+        panel = MakePanel("TeacherPlacementPanel", parent, new Vector2(0.035f, 0.035f),
+            new Vector2(0.965f, 0.205f));
+        MakeButton("PreviousPlacementField", panel, "‹", new Vector2(0.04f, 0.75f),
+            new Vector2(0.16f, 0.96f), Slate, () => SelectField(-1));
+        fieldLabel = MakeText("PlacementField", panel, string.Empty, 31f,
+            new Vector2(0.18f, 0.75f), new Vector2(0.82f, 0.96f), TextAlignmentOptions.Center);
+        fieldLabel.fontStyle = FontStyles.Bold;
+        MakeButton("NextPlacementField", panel, "›", new Vector2(0.84f, 0.75f),
+            new Vector2(0.96f, 0.96f), Slate, () => SelectField(1));
 
-        string[] labels = { "Marcador", "Tamaño", "Derecha / izquierda", "Altura", "Sobre la página", "Giro" };
-        string[] units = { "cm", "cm", "cm", "cm", "cm", "°" };
-        float[] steps = { 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 5f };
-        for (int i = 0; i < labels.Length; i++)
-        {
-            int index = i;
-            float top = 0.88f - i * 0.116f;
-            float bottom = top - 0.108f;
-            MakeText("Field" + i, panel, labels[i], 27f,
-                new Vector2(0.055f, bottom), new Vector2(0.42f, top), TextAlignmentOptions.Left);
-            MakeButton("Minus" + i, panel, "−", new Vector2(0.44f, bottom + 0.008f),
-                new Vector2(0.55f, top - 0.008f), Teal, () => adjust?.Invoke(index, -steps[index]));
-            values[i] = MakeText("Value" + i, panel, "0 " + units[i], 29f,
-                new Vector2(0.56f, bottom), new Vector2(0.78f, top), TextAlignmentOptions.Center);
-            MakeButton("Plus" + i, panel, "+", new Vector2(0.80f, bottom + 0.008f),
-                new Vector2(0.92f, top - 0.008f), Teal, () => adjust?.Invoke(index, steps[index]));
-        }
+        MakeButton("DecreasePlacement", panel, "−", new Vector2(0.04f, 0.44f),
+            new Vector2(0.24f, 0.72f), Teal, () => adjust?.Invoke(selectedField, -FieldSteps[selectedField]));
+        valueLabel = MakeText("PlacementValue", panel, string.Empty, 34f,
+            new Vector2(0.26f, 0.44f), new Vector2(0.74f, 0.72f), TextAlignmentOptions.Center);
+        valueLabel.fontStyle = FontStyles.Bold;
+        MakeButton("IncreasePlacement", panel, "+", new Vector2(0.76f, 0.44f),
+            new Vector2(0.96f, 0.72f), Teal, () => adjust?.Invoke(selectedField, FieldSteps[selectedField]));
 
-        MakeButton("SavePlacement", panel, "Guardar", new Vector2(0.05f, 0.105f),
-            new Vector2(0.49f, 0.185f), Teal, () => save?.Invoke());
-        MakeButton("ResetPlacement", panel, "Deshacer", new Vector2(0.51f, 0.105f),
-            new Vector2(0.95f, 0.185f), new Color(0.37f, 0.48f, 0.52f), () => reset?.Invoke());
-        feedback = MakeText("PlacementFeedback", panel,
-            "El ancho del marcador se aplica al volver a escanear.", 23f,
-            new Vector2(0.05f, 0.012f), new Vector2(0.95f, 0.099f), TextAlignmentOptions.Center);
+        MakeButton("SavePlacement", panel, "Guardar", new Vector2(0.04f, 0.20f),
+            new Vector2(0.49f, 0.41f), Teal, () => save?.Invoke());
+        MakeButton("ResetPlacement", panel, "Deshacer", new Vector2(0.51f, 0.20f),
+            new Vector2(0.96f, 0.41f), Slate, () => reset?.Invoke());
+        feedback = MakeText("PlacementFeedback", panel, string.Empty, 23f,
+            new Vector2(0.04f, 0.02f), new Vector2(0.96f, 0.18f), TextAlignmentOptions.Center);
+        RefreshSelectedField();
+        Layout();
         panel.gameObject.SetActive(false);
+    }
+
+    private void Update()
+    {
+        if (lastLandscape != (Screen.width > Screen.height))
+            Layout();
     }
 
     public void SetPlacement(ChapterArPlacement placement)
@@ -76,7 +88,8 @@ public sealed class ARPlacementEditorUI : MonoBehaviour
             placement.ar_offset_y_cm, placement.ar_offset_z_cm, placement.ar_yaw_degrees,
         };
         for (int i = 0; i < values.Length; i++)
-            values[i].text = numbers[i].ToString("0.#") + (i == 5 ? "°" : " cm");
+            values[i] = numbers[i];
+        RefreshSelectedField();
     }
 
     public void SetMessage(string message)
@@ -91,6 +104,36 @@ public sealed class ARPlacementEditorUI : MonoBehaviour
         panel.gameObject.SetActive(open);
         toggleLabel.text = open ? "Ver modelo" : "Ajustar modelo";
         openChanged?.Invoke(open);
+    }
+
+    private void SelectField(int direction)
+    {
+        selectedField = (selectedField + direction + FieldLabels.Length) % FieldLabels.Length;
+        RefreshSelectedField();
+    }
+
+    private void RefreshSelectedField()
+    {
+        if (fieldLabel != null)
+            fieldLabel.text = (selectedField + 1) + "/" + FieldLabels.Length + " · " + FieldLabels[selectedField];
+        if (valueLabel != null)
+            valueLabel.text = values[selectedField].ToString("0.#") + (selectedField == 5 ? "°" : " cm");
+        if (feedback != null)
+            feedback.text = selectedField == 0
+                ? "El marcador se actualiza al guardar y volver a escanear."
+                : "El modelo cambia en directo. Guarda cuando quede bien.";
+    }
+
+    private void Layout()
+    {
+        bool landscape = Screen.width > Screen.height;
+        lastLandscape = landscape;
+        Stretch(toggleButton.transform as RectTransform,
+            landscape ? new Vector2(0.53f, 0.88f) : new Vector2(0.70f, 0.745f),
+            landscape ? new Vector2(0.82f, 0.985f) : new Vector2(0.97f, 0.81f));
+        Stretch(panel,
+            landscape ? new Vector2(0.02f, 0.12f) : new Vector2(0.035f, 0.035f),
+            landscape ? new Vector2(0.49f, 0.68f) : new Vector2(0.965f, 0.205f));
     }
 
     private RectTransform MakePanel(string name, Transform parent, Vector2 min, Vector2 max)

@@ -106,7 +106,7 @@ public class ARSceneController : MonoBehaviour
             teacherEditor = gameObject.AddComponent<ARPlacementEditorUI>();
             teacherEditor.Initialize(titleText != null ? titleText.font : null,
                 AdjustTeacherPlacement, SaveTeacherPlacement, ResetTeacherPlacement,
-                open => experienceUI.SetReadingExpanded(!open));
+                experienceUI.SetTeacherAdjustmentOpen);
             experienceUI.SetReadingExpanded(false);
         }
         trackedImagePlacer = FindAnyObjectByType<QRTrackedImagePlacer>();
@@ -238,6 +238,8 @@ public class ARSceneController : MonoBehaviour
                 ? "Este capítulo no tiene texto narrativo."
                 : content.narration;
         experienceUI?.ScrollNarrationToTop();
+        if (TeacherPreviewSession.IsActive)
+            experienceUI?.SetReadingExpanded(false);
 
         if (audioSource != null)
         {
