@@ -82,7 +82,7 @@ ProjectSettings/           Editor, Android, gráficos y escenas de build
 
 ### Escaneo
 
-`QRCodeScanner.Start()` pide permiso, elige preferentemente cámara trasera e inicia `WebCamTexture`. ZXing intenta leer QR cada `0.25` segundos por defecto. La vista previa ajusta rotación, espejo y proporción en móvil.
+`QRCodeScanner.Start()` pide permiso, elige preferentemente cámara trasera e inicia `WebCamTexture`. La pantalla guía al usuario para centrar el QR en un marco animado; los estados distinguen permiso, preparación, búsqueda, lectura y errores de cámara. Al leerlo confirma el éxito sin mostrar el identificador técnico. ZXing intenta leer QR cada `0.25` segundos por defecto. La vista previa ajusta rotación, espejo y proporción en móvil.
 
 Al leer un código nuevo, guarda `ScannedQRData.LastCode`, detiene el escaneo según configuración y carga `ARScene` tras `0.75` segundos por defecto. La cámara del escáner se detiene antes de la transición. `LastCode` es memoria estática: no es sesión de estudiante ni persistencia entre reinicios.
 

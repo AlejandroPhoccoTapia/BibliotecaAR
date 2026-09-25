@@ -11,10 +11,13 @@ public class QRCodeScanner : MonoBehaviour
     [Header("UI")]
     public RawImage cameraPreview;
     public TMP_Text statusText;
+    public TMP_Text instructionText;
+    public Image scanFrame;
     public bool cameraPreviewCoversScreen = true;
 
     [Header("Scan")]
     public float scanInterval = 0.25f;
+    public float cameraStartupTimeoutSeconds = 8f;
     public bool stopAfterFirstScan = true;
 
     [Header("Scene Flow")]
@@ -30,20 +33,30 @@ public class QRCodeScanner : MonoBehaviour
     private int lastPreviewHeight;
     private int lastPreviewRotation = -1;
     private Vector2 lastPreviewContainerSize;
+    private Image[] reticleSegments;
+    private Coroutine reticlePulseCoroutine;
 
     private IEnumerator Start()
     {
         ConfigureCanvasForMobile();
         ConfigureCameraPreviewRect();
-        SetStatus("Solicitando permiso de camara...");
+        ConfigureScanReticle();
+        SetScannerMessage("Solicitando permiso de cámara…", "La cámara se abrirá para leer el código del libro.", MessageTone.Neutral);
 
         if (!Application.HasUserAuthorization(UserAuthorization.WebCam))
             yield return Application.RequestUserAuthorization(UserAuthorization.WebCam);
 
         if (!Application.HasUserAuthorization(UserAuthorization.WebCam))
         {
-            SetStatus("Permiso de camara denegado");
+            SetScannerMessage("No se pudo acceder a la cámara", "Activa el permiso de cámara en los ajustes del teléfono y vuelve a abrir la app.", MessageTone.Error);
             Debug.LogError("QRCodeScanner: permiso de camara denegado");
+            yield break;
+        }
+
+        if (WebCamTexture.devices.Length == 0)
+        {
+            SetScannerMessage("No se encontró una cámara", "Comprueba que el teléfono tenga una cámara disponible y vuelve a intentar.", MessageTone.Error);
+            Debug.LogError("QRCodeScanner: no hay camaras disponibles");
             yield break;
         }
 
@@ -68,10 +81,29 @@ public class QRCodeScanner : MonoBehaviour
             cameraPreview.texture = webCamTexture;
 
         webCamTexture.Play();
+        SetScannerMessage("Preparando cámara…", "Enfoca el código del libro dentro del marco.", MessageTone.Neutral);
+
+        float startupDeadline = Time.realtimeSinceStartup + Mathf.Max(1f, cameraStartupTimeoutSeconds);
+        while (webCamTexture != null && webCamTexture.isPlaying &&
+               (webCamTexture.width <= 16 || webCamTexture.height <= 16) &&
+               Time.realtimeSinceStartup < startupDeadline)
+        {
+            yield return null;
+        }
+
+        if (webCamTexture == null || !webCamTexture.isPlaying ||
+            webCamTexture.width <= 16 || webCamTexture.height <= 16)
+        {
+            SetScannerMessage("La cámara no respondió", "Cierra otras apps que usen la cámara y vuelve a abrir el escáner.", MessageTone.Error);
+            Debug.LogError("QRCodeScanner: la camara no entrego imagen a tiempo");
+            yield break;
+        }
+
         isScanning = true;
 
         Debug.Log("QRCodeScanner: camara iniciada " + (cameraName ?? "default"));
-        SetStatus("Esperando QR...");
+        SetScannerMessage("Buscando código…", "Centra el QR dentro del marco y mantén el teléfono quieto.", MessageTone.Neutral);
+        reticlePulseCoroutine = StartCoroutine(PulseScanReticle());
 
         StartCoroutine(UpdateCameraPreviewLayout());
         StartCoroutine(ScanLoop());
@@ -80,6 +112,9 @@ public class QRCodeScanner : MonoBehaviour
     private void OnDestroy()
     {
         isScanning = false;
+
+        if (reticlePulseCoroutine != null)
+            StopCoroutine(reticlePulseCoroutine);
 
         if (webCamTexture != null && webCamTexture.isPlaying)
             webCamTexture.Stop();
@@ -126,9 +161,15 @@ public class QRCodeScanner : MonoBehaviour
             ScannedQRData.LastCode = result.Text;
 
             Debug.Log("QR leido: " + result.Text);
-            SetStatus("QR leido: " + result.Text);
+            SetScannerMessage("¡Código encontrado!", "Cargando el contenido del libro…", MessageTone.Success);
+            SetReticleColor(new Color(0.2f, 0.9f, 0.55f, 1f));
+            if (reticlePulseCoroutine != null)
+            {
+                StopCoroutine(reticlePulseCoroutine);
+                reticlePulseCoroutine = null;
+            }
 
-            if (stopAfterFirstScan)
+            if (stopAfterFirstScan || loadSceneAfterScan)
                 isScanning = false;
 
             if (loadSceneAfterScan)
@@ -151,12 +192,99 @@ public class QRCodeScanner : MonoBehaviour
         return WebCamTexture.devices.Length > 0 ? WebCamTexture.devices[0] : null;
     }
 
-    private void SetStatus(string message)
+    private enum MessageTone
+    {
+        Neutral,
+        Success,
+        Error
+    }
+
+    private void SetScannerMessage(string status, string instruction, MessageTone tone)
     {
         if (statusText != null)
-            statusText.text = message;
+        {
+            statusText.text = status;
+            statusText.color = tone == MessageTone.Error
+                ? new Color(1f, 0.45f, 0.4f, 1f)
+                : tone == MessageTone.Success
+                    ? new Color(0.45f, 1f, 0.7f, 1f)
+                    : Color.white;
+        }
 
-        Debug.Log("QRCodeScanner: " + message);
+        if (instructionText != null)
+            instructionText.text = instruction;
+
+        if (tone == MessageTone.Error)
+            SetReticleColor(new Color(1f, 0.4f, 0.35f, 1f));
+        else if (tone == MessageTone.Neutral && !isScanning)
+            SetReticleColor(new Color(0.35f, 0.9f, 1f, 0.9f));
+
+        Debug.Log("QRCodeScanner: " + status);
+    }
+
+    private void ConfigureScanReticle()
+    {
+        if (scanFrame == null)
+            return;
+
+        scanFrame.raycastTarget = false;
+        RectTransform frameRect = scanFrame.rectTransform;
+        float width = frameRect.rect.width > 0f ? frameRect.rect.width : frameRect.sizeDelta.x;
+        float height = frameRect.rect.height > 0f ? frameRect.rect.height : frameRect.sizeDelta.y;
+        float cornerLength = Mathf.Clamp(Mathf.Min(width, height) * 0.16f, 48f, 100f);
+        float thickness = Mathf.Clamp(Mathf.Min(width, height) * 0.018f, 10f, 16f);
+        float x = Mathf.Max(0f, width * 0.5f - cornerLength * 0.5f);
+        float y = Mathf.Max(0f, height * 0.5f - cornerLength * 0.5f);
+
+        reticleSegments = new Image[8];
+        reticleSegments[0] = CreateReticleSegment("TopLeftHorizontal", new Vector2(-x, y), new Vector2(cornerLength, thickness));
+        reticleSegments[1] = CreateReticleSegment("TopLeftVertical", new Vector2(-width * 0.5f + thickness * 0.5f, y), new Vector2(thickness, cornerLength));
+        reticleSegments[2] = CreateReticleSegment("TopRightHorizontal", new Vector2(x, y), new Vector2(cornerLength, thickness));
+        reticleSegments[3] = CreateReticleSegment("TopRightVertical", new Vector2(width * 0.5f - thickness * 0.5f, y), new Vector2(thickness, cornerLength));
+        reticleSegments[4] = CreateReticleSegment("BottomLeftHorizontal", new Vector2(-x, -y), new Vector2(cornerLength, thickness));
+        reticleSegments[5] = CreateReticleSegment("BottomLeftVertical", new Vector2(-width * 0.5f + thickness * 0.5f, -y), new Vector2(thickness, cornerLength));
+        reticleSegments[6] = CreateReticleSegment("BottomRightHorizontal", new Vector2(x, -y), new Vector2(cornerLength, thickness));
+        reticleSegments[7] = CreateReticleSegment("BottomRightVertical", new Vector2(width * 0.5f - thickness * 0.5f, -y), new Vector2(thickness, cornerLength));
+        SetReticleColor(new Color(0.35f, 0.9f, 1f, 0.9f));
+    }
+
+    private Image CreateReticleSegment(string segmentName, Vector2 position, Vector2 size)
+    {
+        GameObject segmentObject = new GameObject(segmentName, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+        segmentObject.transform.SetParent(scanFrame.transform, false);
+
+        RectTransform rect = segmentObject.GetComponent<RectTransform>();
+        rect.anchorMin = new Vector2(0.5f, 0.5f);
+        rect.anchorMax = new Vector2(0.5f, 0.5f);
+        rect.pivot = new Vector2(0.5f, 0.5f);
+        rect.anchoredPosition = position;
+        rect.sizeDelta = size;
+
+        Image segment = segmentObject.GetComponent<Image>();
+        segment.raycastTarget = false;
+        return segment;
+    }
+
+    private IEnumerator PulseScanReticle()
+    {
+        while (isScanning)
+        {
+            float alpha = Mathf.Lerp(0.55f, 1f, (Mathf.Sin(Time.unscaledTime * 2.5f) + 1f) * 0.5f);
+            SetReticleColor(new Color(0.35f, 0.9f, 1f, alpha));
+            yield return null;
+        }
+    }
+
+    private void SetReticleColor(Color color)
+    {
+        if (reticleSegments == null)
+            return;
+
+        foreach (Image segment in reticleSegments)
+        {
+            if (segment != null)
+                segment.color = color;
+        }
     }
 
     private void ConfigureCanvasForMobile()
