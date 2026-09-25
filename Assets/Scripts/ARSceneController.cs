@@ -55,8 +55,8 @@ public class ARSceneController : MonoBehaviour
 
     [Header("API")]
     public bool loadContentFromApi = true;
-    public string apiBaseUrl = "http://192.168.1.48:8000/api";
-    public float apiTimeoutSeconds = 10f;
+    public string apiBaseUrl = "https://bibliotecaar-backend.onrender.com/api";
+    public float apiTimeoutSeconds = 75f;
     public bool fallbackToLocalContent = true;
     public bool addTrackingImageFromApi = true;
     public float trackingImagePhysicalWidthMeters = 0.06f;
@@ -579,7 +579,7 @@ public class ARSceneController : MonoBehaviour
         float waitStartedAt = Time.realtimeSinceStartup;
         while (ARSession.state < ARSessionState.Ready)
         {
-            if (Time.realtimeSinceStartup - waitStartedAt > apiTimeoutSeconds)
+            if (Time.realtimeSinceStartup - waitStartedAt > Mathf.Min(apiTimeoutSeconds, 15f))
             {
                 Debug.LogWarning("ARSceneController: ARSession no llego a Ready para agregar QR runtime, state=" + ARSession.state);
                 trackingImageSetupFailed = true;
@@ -763,7 +763,7 @@ public class ARSceneController : MonoBehaviour
     private string BuildUnitySceneUrl(string qrCode)
     {
         string baseUrl = string.IsNullOrWhiteSpace(apiBaseUrl)
-            ? "http://192.168.1.48:8000/api"
+            ? "https://bibliotecaar-backend.onrender.com/api"
             : apiBaseUrl.TrimEnd('/');
 
         return baseUrl + "/unity/scenes/" + UnityWebRequest.EscapeURL(qrCode) + "/";

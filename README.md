@@ -145,8 +145,8 @@ En el objeto con `ARSceneController`:
 | Campo | Inicializador del script / significado |
 | --- | --- |
 | `loadContentFromApi` | `true`. |
-| `apiBaseUrl` | `http://192.168.1.48:8000/api`: adaptar a la instalación. |
-| `apiTimeoutSeconds` | `10`; usado en peticiones API/audio/imagen y esperas concretas. No es timeout general de glTFast. |
+| `apiBaseUrl` | `https://bibliotecaar-backend.onrender.com/api`; también queda guardada explícitamente en `ARScene`. |
+| `apiTimeoutSeconds` | `75`; da margen al arranque del servicio gratuito de Render en peticiones API/audio/imagen. La espera de ARSession se limita a 15 segundos. No es timeout general de glTFast. |
 | `fallbackToLocalContent` | `true`. |
 | `addTrackingImageFromApi` | `true`. |
 | `trackingImagePhysicalWidthMeters` | `0.06`; ajustarlo al ancho físico real de la imagen impresa. |
@@ -157,9 +157,9 @@ En el objeto con `ARSceneController`:
 | `prefabBindings` | Mapeo de claves a prefabs locales. |
 | `fallbackPrefab` | Alternativa local opcional. |
 
-Remoto: `https://<tu-backend>.onrender.com/api`. La URL Vercel del panel no es la API.
+La app móvil consulta directamente la API de Render; Django lee los capítulos publicados desde la base de datos configurada en el servidor. La URL Vercel del panel no es la API.
 
-Local: misma red para teléfono/ordenador, IP LAN del ordenador, Django en `0.0.0.0:8000` y puerto permitido. `localhost` en Android apunta al teléfono. Los ajustes guardados permiten HTTP inseguro para desarrollo; el despliegue remoto previsto usa HTTPS.
+Local: cambiar `apiBaseUrl` temporalmente a la IP LAN del ordenador, usar la misma red, Django en `0.0.0.0:8000` y puerto permitido. `localhost` en Android apunta al teléfono. Los ajustes guardados permiten HTTP inseguro para desarrollo; la configuración predeterminada usa HTTPS.
 
 No hay archivo `.env` ni pantalla de ajustes que configure automáticamente esta URL. No incluir credenciales del servidor en el cliente.
 

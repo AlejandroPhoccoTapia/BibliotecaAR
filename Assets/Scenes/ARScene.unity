@@ -780,6 +780,9 @@ MonoBehaviour:
     prefab: {fileID: 741197293413483114, guid: 87bdfbdae4ad04341a7cb177a0ed7dd6, type: 3}
     audioClip: {fileID: 8300000, guid: 5d978f9be3841f24ea052863c5b3bddc, type: 3}
   fallbackPrefab: {fileID: 0}
+  loadContentFromApi: 1
+  apiBaseUrl: https://bibliotecaar-backend.onrender.com/api
+  apiTimeoutSeconds: 75
   titleText: {fileID: 931560281}
   narrationText: {fileID: 581209459}
   audioSource: {fileID: 1350565316}
