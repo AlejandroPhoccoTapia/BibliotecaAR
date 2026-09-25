@@ -80,28 +80,61 @@ public class ARSceneController : MonoBehaviour
     private SceneContent selectedContent;
     private Dictionary<string, SceneContent> contentByCode;
     private Dictionary<string, GameObject> prefabByKey;
+    private ARSceneExperienceUI experienceUI;
+    private QRTrackedImagePlacer trackedImagePlacer;
+    private string scannedQrCode;
+    private bool isLoadingContent;
+    private bool trackingImageSetupFailed;
+    private bool modelSetupFailed;
+    private bool hasPlaceableModel;
 
     IEnumerator Start()
     {
         BuildContentDictionary();
 
-        string qrCode = ScannedQRData.LastCode;
-        if (string.IsNullOrWhiteSpace(qrCode))
+        experienceUI = gameObject.AddComponent<ARSceneExperienceUI>();
+        experienceUI.Initialize(titleText, narrationText, audioSource, PlayAudio, PauseAudio, RetryContentLoad);
+        trackedImagePlacer = FindAnyObjectByType<QRTrackedImagePlacer>();
+        if (trackedImagePlacer != null)
+            trackedImagePlacer.TargetTrackingChanged += OnTargetTrackingChanged;
+
+        scannedQrCode = ScannedQRData.LastCode;
+        if (string.IsNullOrWhiteSpace(scannedQrCode))
         {
             Debug.LogWarning("ARSceneController: no hay codigo QR recibido");
-            ApplyContent(CreateUnknownContent("sin_codigo"));
+            ShowUnavailableContent("No llegó ningún código QR. Vuelve al escáner e inténtalo otra vez.", false);
             yield break;
         }
 
-        Debug.Log("ARSceneController: codigo recibido en ARScene: " + qrCode);
+        Debug.Log("ARSceneController: codigo recibido en ARScene: " + scannedQrCode);
 
         if (loadContentFromApi)
         {
-            yield return LoadContentFromApi(qrCode);
+            yield return LoadContentFromApi(scannedQrCode);
             yield break;
         }
 
-        ApplyLocalContent(qrCode);
+        if (TryApplyLocalContent(scannedQrCode))
+            SetTrackingHint();
+        else
+            ShowUnavailableContent(null, false);
+    }
+
+    private void OnDestroy()
+    {
+        if (trackedImagePlacer != null)
+            trackedImagePlacer.TargetTrackingChanged -= OnTargetTrackingChanged;
+    }
+
+    public void RetryContentLoad()
+    {
+        if (isLoadingContent || string.IsNullOrWhiteSpace(scannedQrCode))
+            return;
+
+        if (loadContentFromApi)
+            StartCoroutine(LoadContentFromApi(scannedQrCode));
+        else if (TryApplyLocalContent(scannedQrCode))
+            SetTrackingHint();
     }
 
     public void PlayAudio()
@@ -118,7 +151,11 @@ public class ARSceneController : MonoBehaviour
             return;
         }
 
-        audioSource.Play();
+        if (audioSource.time > 0f && audioSource.time < audioSource.clip.length)
+            audioSource.UnPause();
+        else
+            audioSource.Play();
+        experienceUI?.UpdateAudioPlaybackState();
         Debug.Log("ARSceneController: reproduciendo audio");
     }
 
@@ -128,6 +165,7 @@ public class ARSceneController : MonoBehaviour
             return;
 
         audioSource.Pause();
+        experienceUI?.UpdateAudioPlaybackState();
         Debug.Log("ARSceneController: audio pausado");
     }
 
@@ -148,17 +186,31 @@ public class ARSceneController : MonoBehaviour
             titleText.text = content.title;
 
         if (narrationText != null)
-            narrationText.text = content.narration;
+            narrationText.text = string.IsNullOrWhiteSpace(content.narration)
+                ? "Este capítulo no tiene texto narrativo."
+                : content.narration;
+        experienceUI?.ScrollNarrationToTop();
 
         if (audioSource != null)
         {
+            audioSource.Stop();
             audioSource.clip = content.audioClip;
 
             if (content.audioClip != null)
-                audioSource.Play();
+                experienceUI?.SetAudioAvailable(true);
             else if (!string.IsNullOrWhiteSpace(content.audioUrl))
+            {
+                experienceUI?.SetAudioLoading();
                 StartCoroutine(LoadAudioFromUrl(content.audioUrl));
+            }
+            else
+                experienceUI?.SetAudioAvailable(false);
         }
+
+        experienceUI?.SetStatus(
+            "Contenido cargado. Apunta al QR impreso para colocar el modelo.",
+            ARSceneExperienceUI.MessageTone.Info,
+            false);
 
         GameObject prefabToPlace = content.prefab != null
             ? content.prefab
@@ -168,9 +220,13 @@ public class ARSceneController : MonoBehaviour
         if (prefabToPlace == null && placer != null)
             prefabToPlace = placer.objectToPlace;
 
+        hasPlaceableModel = prefabToPlace != null || !string.IsNullOrWhiteSpace(content.modelUrl);
+
         if (prefabToPlace == null)
         {
             Debug.LogWarning("ARSceneController: no hay prefab para colocar en AR");
+            if (string.IsNullOrWhiteSpace(content.modelUrl))
+                experienceUI?.SetStatus("El texto está listo, pero este capítulo no tiene un modelo 3D.", ARSceneExperienceUI.MessageTone.Warning, false);
             return;
         }
 
@@ -254,6 +310,13 @@ public class ARSceneController : MonoBehaviour
 
     private IEnumerator LoadContentFromApi(string qrCode)
     {
+        if (isLoadingContent)
+            yield break;
+
+        isLoadingContent = true;
+        trackingImageSetupFailed = false;
+        modelSetupFailed = false;
+        experienceUI?.SetStatus("Buscando el capítulo…", ARSceneExperienceUI.MessageTone.Info, false);
         string url = BuildUnitySceneUrl(qrCode);
         Debug.Log("ARSceneController: consultando API: " + url);
 
@@ -273,10 +336,11 @@ public class ARSceneController : MonoBehaviour
             if (request != null)
                 request.Dispose();
 
-            if (fallbackToLocalContent)
-                ApplyLocalContent(qrCode);
-            else
-                ApplyContent(CreateUnknownContent(qrCode));
+            isLoadingContent = false;
+            if (!TryShowLocalFallback(qrCode, "No se pudo conectar con el servidor."))
+            {
+                ShowUnavailableContent("No se pudo conectar con el servidor. Revisa tu conexión e inténtalo de nuevo.", true);
+            }
 
             yield break;
         }
@@ -294,10 +358,16 @@ public class ARSceneController : MonoBehaviour
                     " error=" + request.error
                 );
 
-                if (fallbackToLocalContent)
-                    ApplyLocalContent(qrCode);
-                else
-                    ApplyContent(CreateUnknownContent(qrCode));
+                long responseCode = request.responseCode;
+                bool notFound = responseCode == 404;
+                string message = notFound
+                    ? "Este QR no existe o el libro todavía no está publicado."
+                    : request.result == UnityWebRequest.Result.ConnectionError
+                        ? "No hay conexión con el servidor. Revisa internet e inténtalo de nuevo."
+                        : "No se pudo cargar el capítulo. Inténtalo de nuevo.";
+
+                if (!TryShowLocalFallback(qrCode, message))
+                    ShowUnavailableContent(message, !notFound);
 
                 yield break;
             }
@@ -315,11 +385,8 @@ public class ARSceneController : MonoBehaviour
             if (apiScene == null || string.IsNullOrWhiteSpace(apiScene.qr_code))
             {
                 Debug.LogWarning("ARSceneController: API no devolvio una escena valida");
-
-                if (fallbackToLocalContent)
-                    ApplyLocalContent(qrCode);
-                else
-                    ApplyContent(CreateUnknownContent(qrCode));
+                if (!TryShowLocalFallback(qrCode, "El servidor devolvió una respuesta incompleta."))
+                    ShowUnavailableContent("No se pudo interpretar el contenido. Puedes volver a intentarlo.", true);
 
                 yield break;
             }
@@ -331,11 +398,27 @@ public class ARSceneController : MonoBehaviour
                 yield return LoadGltfModelFromUrl(apiContent);
 
             if (addTrackingImageFromApi)
+            {
+                experienceUI?.SetStatus("Preparando el reconocimiento del QR…", ARSceneExperienceUI.MessageTone.Info, false);
                 yield return AddTrackingImageFromApi(apiScene);
+            }
+
+            if (modelSetupFailed)
+            {
+                experienceUI?.SetStatus("El capítulo cargó, pero falló el modelo 3D. Revisa la conexión e inténtalo de nuevo.", ARSceneExperienceUI.MessageTone.Warning, true);
+            }
+            else if (!trackingImageSetupFailed)
+            {
+                if (hasPlaceableModel)
+                    SetTrackingHint();
+                else
+                    experienceUI?.SetStatus("Capítulo listo para leer, pero no tiene un modelo 3D.", ARSceneExperienceUI.MessageTone.Warning, false);
+            }
         }
         finally
         {
             request.Dispose();
+            isLoadingContent = false;
         }
     }
 
@@ -370,6 +453,7 @@ public class ARSceneController : MonoBehaviour
         }
 
         Debug.Log("ARSceneController: cargando GLB runtime: " + content.modelUrl);
+        experienceUI?.SetStatus("Descargando el modelo 3D…", ARSceneExperienceUI.MessageTone.Info, false);
 
         GltfImport gltfImport = new GltfImport();
         Task<bool> loadTask = gltfImport.Load(content.modelUrl);
@@ -379,6 +463,8 @@ public class ARSceneController : MonoBehaviour
         if (loadTask.IsFaulted || !loadTask.Result)
         {
             Debug.LogWarning("ARSceneController: no se pudo cargar GLB runtime: " + GetTaskError(loadTask));
+            modelSetupFailed = true;
+            experienceUI?.SetStatus("El capítulo cargó, pero falló el modelo 3D. Revisa la conexión e inténtalo de nuevo.", ARSceneExperienceUI.MessageTone.Warning, true);
             yield break;
         }
 
@@ -393,6 +479,8 @@ public class ARSceneController : MonoBehaviour
         {
             Debug.LogWarning("ARSceneController: no se pudo instanciar GLB runtime: " + GetTaskError(instantiateTask));
             Destroy(modelRoot);
+            modelSetupFailed = true;
+            experienceUI?.SetStatus("No se pudo preparar el modelo 3D. Puedes volver a intentarlo.", ARSceneExperienceUI.MessageTone.Warning, true);
             yield break;
         }
 
@@ -437,6 +525,7 @@ public class ARSceneController : MonoBehaviour
             if (request.result != UnityWebRequest.Result.Success)
             {
                 Debug.LogWarning("ARSceneController: no se pudo descargar audio: " + request.error);
+                experienceUI?.SetAudioAvailable(false);
                 yield break;
             }
 
@@ -444,11 +533,12 @@ public class ARSceneController : MonoBehaviour
             if (clip == null)
             {
                 Debug.LogWarning("ARSceneController: audio descargado invalido");
+                experienceUI?.SetAudioAvailable(false);
                 yield break;
             }
 
             audioSource.clip = clip;
-            audioSource.Play();
+            experienceUI?.SetAudioAvailable(true);
         }
     }
 
@@ -459,6 +549,15 @@ public class ARSceneController : MonoBehaviour
             string.IsNullOrWhiteSpace(apiScene.qr_image_url))
         {
             Debug.Log("ARSceneController: API no envio qr_image_url para tracking runtime");
+            ARTrackedImageManager existingImageManager = FindAnyObjectByType<ARTrackedImageManager>();
+            bool referenceImageAvailable = existingImageManager != null && apiScene != null &&
+                !string.IsNullOrWhiteSpace(apiScene.qr_code) &&
+                ReferenceLibraryContainsName(existingImageManager.referenceLibrary, apiScene.qr_code);
+            if (!referenceImageAvailable)
+            {
+                trackingImageSetupFailed = true;
+                experienceUI?.SetStatus("No hay una imagen de este QR preparada para AR. Pide al docente que revise el capítulo.", ARSceneExperienceUI.MessageTone.Warning, false);
+            }
             yield break;
         }
 
@@ -466,6 +565,8 @@ public class ARSceneController : MonoBehaviour
         if (imageManager == null)
         {
             Debug.LogWarning("ARSceneController: no se encontro ARTrackedImageManager para agregar QR runtime");
+            trackingImageSetupFailed = true;
+            experienceUI?.SetStatus("No se pudo iniciar el seguimiento AR. Vuelve al escáner e inténtalo otra vez.", ARSceneExperienceUI.MessageTone.Warning, false);
             yield break;
         }
 
@@ -481,6 +582,8 @@ public class ARSceneController : MonoBehaviour
             if (Time.realtimeSinceStartup - waitStartedAt > apiTimeoutSeconds)
             {
                 Debug.LogWarning("ARSceneController: ARSession no llego a Ready para agregar QR runtime, state=" + ARSession.state);
+                trackingImageSetupFailed = true;
+                experienceUI?.SetStatus("La cámara AR todavía no está lista. Muévela despacio y vuelve a intentarlo.", ARSceneExperienceUI.MessageTone.Warning, true);
                 yield break;
             }
 
@@ -504,6 +607,8 @@ public class ARSceneController : MonoBehaviour
                     " error=" +
                     imageRequest.error
                 );
+                trackingImageSetupFailed = true;
+                experienceUI?.SetStatus("No se pudo preparar el QR para AR. Revisa tu conexión e inténtalo de nuevo.", ARSceneExperienceUI.MessageTone.Warning, true);
                 yield break;
             }
 
@@ -511,6 +616,8 @@ public class ARSceneController : MonoBehaviour
             if (qrTexture == null)
             {
                 Debug.LogWarning("ARSceneController: imagen QR runtime descargada invalida");
+                trackingImageSetupFailed = true;
+                experienceUI?.SetStatus("La imagen del QR no es válida para el seguimiento AR.", ARSceneExperienceUI.MessageTone.Warning, false);
                 yield break;
             }
 
@@ -518,6 +625,8 @@ public class ARSceneController : MonoBehaviour
             if (mutableLibrary == null)
             {
                 Destroy(qrTexture);
+                trackingImageSetupFailed = true;
+                experienceUI?.SetStatus("Este dispositivo no pudo preparar el QR para seguimiento AR.", ARSceneExperienceUI.MessageTone.Warning, false);
                 yield break;
             }
 
@@ -534,6 +643,8 @@ public class ARSceneController : MonoBehaviour
             {
                 Debug.LogWarning("ARSceneController: no se pudo programar QR runtime: " + exception);
                 Destroy(qrTexture);
+                trackingImageSetupFailed = true;
+                experienceUI?.SetStatus("No se pudo preparar el QR para AR. Puedes volver al escáner.", ARSceneExperienceUI.MessageTone.Warning, false);
                 yield break;
             }
 
@@ -546,6 +657,12 @@ public class ARSceneController : MonoBehaviour
                 " status=" +
                 addImageJob.status
             );
+
+            if (addImageJob.status != AddReferenceImageJobStatus.Success)
+            {
+                trackingImageSetupFailed = true;
+                experienceUI?.SetStatus("ARCore no pudo reconocer la imagen del QR. Prueba con buena luz y una impresión nítida.", ARSceneExperienceUI.MessageTone.Warning, false);
+            }
 
             Destroy(qrTexture);
         }
@@ -587,15 +704,60 @@ public class ARSceneController : MonoBehaviour
         return false;
     }
 
-    private void ApplyLocalContent(string qrCode)
+    private bool TryApplyLocalContent(string qrCode)
     {
         if (!contentByCode.TryGetValue(qrCode, out selectedContent))
-        {
-            Debug.LogWarning("ARSceneController: no existe contenido local para QR: " + qrCode);
-            selectedContent = CreateUnknownContent(qrCode);
-        }
+            return false;
 
         ApplyContent(selectedContent);
+        return true;
+    }
+
+    private bool TryShowLocalFallback(string qrCode, string reason)
+    {
+        if (!fallbackToLocalContent || !TryApplyLocalContent(qrCode))
+            return false;
+
+        experienceUI?.SetStatus(reason + " Se muestra una copia de demostración incluida en la app.", ARSceneExperienceUI.MessageTone.Warning, true);
+        return true;
+    }
+
+    private void ShowUnavailableContent(string message, bool canRetry)
+    {
+        ApplyContent(CreateUnknownContent(scannedQrCode));
+        experienceUI?.SetStatus(message ?? "No encontramos este contenido. Comprueba que el libro esté publicado.", ARSceneExperienceUI.MessageTone.Error, canRetry);
+    }
+
+    private void SetTrackingHint()
+    {
+        if (!hasPlaceableModel)
+        {
+            experienceUI?.SetStatus("Capítulo listo para leer. Este contenido no incluye modelo 3D.", ARSceneExperienceUI.MessageTone.Warning, false);
+            return;
+        }
+
+        ARTrackedImageManager imageManager = FindAnyObjectByType<ARTrackedImageManager>();
+        if (imageManager != null && !string.IsNullOrWhiteSpace(scannedQrCode))
+        {
+            foreach (ARTrackedImage trackedImage in imageManager.trackables)
+            {
+                if (trackedImage.referenceImage.name == scannedQrCode)
+                {
+                    experienceUI?.HandleTrackingState(trackedImage.trackingState == TrackingState.Tracking);
+                    return;
+                }
+            }
+        }
+
+        experienceUI?.SetStatus(
+            "Apunta al mismo QR impreso para ver el modelo. Muévete despacio y mejora la luz si no aparece.",
+            ARSceneExperienceUI.MessageTone.Info,
+            false);
+    }
+
+    private void OnTargetTrackingChanged(bool isTracking)
+    {
+        experienceUI?.HandleTrackingState(isTracking);
     }
 
     private string BuildUnitySceneUrl(string qrCode)
@@ -661,7 +823,7 @@ public class ARSceneController : MonoBehaviour
         {
             qrCode = qrCode,
             title = "Contenido no encontrado",
-            narration = "No hay datos locales para el codigo QR: " + qrCode
+            narration = "Comprueba que el QR sea correcto y que el libro esté publicado. Puedes volver al escáner e intentarlo otra vez."
         };
     }
 }

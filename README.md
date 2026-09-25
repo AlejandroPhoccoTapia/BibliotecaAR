@@ -63,6 +63,7 @@ Assets/
     QRCodeScanner.cs        Permiso/cámara, ZXing y transición
     ScannedQRData.cs        LastCode estático entre escenas
     ARSceneController.cs    API, selección, GLB, audio y QR dinámico
+    ARSceneExperienceUI.cs Estados AR, texto desplazable y controles accesibles
     QRTrackedImagePlacer.cs Colocación/visibilidad sobre imagen
     ARRaycastPlaceObject.cs Alternativa mediante toque/raycast
     ARPlaneDebugLogger.cs   Diagnóstico XR y planos
@@ -82,7 +83,7 @@ ProjectSettings/           Editor, Android, gráficos y escenas de build
 
 ### Escaneo
 
-`QRCodeScanner.Start()` pide permiso, elige preferentemente cámara trasera e inicia `WebCamTexture`. La pantalla guía al usuario para centrar el QR en un marco animado; los estados distinguen permiso, preparación, búsqueda, lectura y errores de cámara. Al leerlo confirma el éxito sin mostrar el identificador técnico. ZXing intenta leer QR cada `0.25` segundos por defecto. La vista previa ajusta rotación, espejo y proporción en móvil.
+`QRCodeScanner.Start()` pide permiso, elige preferentemente cámara trasera e inicia `WebCamTexture`. La pantalla guía al usuario para centrar el QR en un marco animado; los estados distinguen permiso, preparación, búsqueda, lectura y errores de cámara. Si la cámara falla, puede volver a intentar desde la pantalla; si el permiso está bloqueado, la instrucción indica activarlo en Ajustes. Al leer el QR confirma el éxito sin mostrar el identificador técnico. ZXing intenta leer códigos cada `0.25` segundos por defecto. La vista previa ajusta rotación, espejo y proporción en móvil.
 
 Al leer un código nuevo, guarda `ScannedQRData.LastCode`, detiene el escaneo según configuración y carga `ARScene` tras `0.75` segundos por defecto. La cámara del escáner se detiene antes de la transición. `LastCode` es memoria estática: no es sesión de estudiante ni persistencia entre reinicios.
 
@@ -96,11 +97,15 @@ GET <apiBaseUrl>/unity/scenes/<qr_code>/
 
 Escapa el código para la URL. Convierte la respuesta en `SceneContent` y aplica título, texto, audio y prefab local disponible. Después intenta cargar GLB remoto y añadir la imagen QR a la biblioteca de seguimiento.
 
+La pantalla indica búsqueda, preparación, errores de red, código inexistente/no publicado y fallos del modelo, con reintento para operaciones recuperables. Si falla la API y hay contenido local con el mismo código, lo muestra avisando que es una copia de demostración. El texto narrativo se desplaza; el audio tiene botones explícitos para reproducir y pausar y no empieza sin acción del usuario. La interfaz usa el área segura y cambia el tamaño con la resolución.
+
 Si falla la API o el JSON y `fallbackToLocalContent` está activo, busca contenido local. Ante código desconocido muestra «Contenido no encontrado». El fallback no es una caché persistente: solo conoce los datos/prefabs locales incluidos.
 
 ### Seguimiento y modelo
 
 `ARTrackedImageManager` reconoce referencias. `QRTrackedImagePlacer` compara su nombre con el código escaneado, instancia el recurso como hijo de la imagen y actualiza posición/rotación. Puede ocultarlo cuando deja de estar en estado Tracking.
+
+El estado del QR seguido se comunica a la interfaz. Si no hay seguimiento, se guía al usuario para volver a encuadrar el impreso, moverse lentamente y mejorar la iluminación.
 
 Leer el texto QR con ZXing y estimar su pose con ARCore son pasos diferentes. Un QR legible no garantiza una imagen aceptada o seguida por ARCore.
 

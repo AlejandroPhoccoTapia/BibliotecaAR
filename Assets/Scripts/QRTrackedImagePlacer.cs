@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.XR.ARFoundation;
@@ -5,6 +6,8 @@ using UnityEngine.XR.ARSubsystems;
 
 public class QRTrackedImagePlacer : MonoBehaviour
 {
+    public event Action<bool> TargetTrackingChanged;
+
     public GameObject objectToPlace;
     public Vector3 localOffset = new Vector3(0f, 0.05f, 0f);
     public Vector3 localEulerAngles = Vector3.zero;
@@ -15,6 +18,7 @@ public class QRTrackedImagePlacer : MonoBehaviour
     private ARTrackedImageManager trackedImageManager;
     private readonly Dictionary<TrackableId, GameObject> spawnedObjects = new Dictionary<TrackableId, GameObject>();
     private readonly Dictionary<string, GameObject> spawnedObjectsByCode = new Dictionary<string, GameObject>();
+    private bool? lastReportedTrackingState;
 
     void Awake()
     {
@@ -44,6 +48,7 @@ public class QRTrackedImagePlacer : MonoBehaviour
     public void SetObjectToPlace(GameObject newObjectToPlace, bool clearExistingObjects)
     {
         objectToPlace = newObjectToPlace;
+        lastReportedTrackingState = null;
 
         if (!clearExistingObjects)
             return;
@@ -69,14 +74,17 @@ public class QRTrackedImagePlacer : MonoBehaviour
 
         foreach (KeyValuePair<TrackableId, ARTrackedImage> removed in args.removed)
         {
+            string removedQrCode = removed.Value != null ? removed.Value.referenceImage.name : null;
+            if (string.IsNullOrWhiteSpace(GetRequiredCode()) || removedQrCode == GetRequiredCode())
+                ReportTrackingState(false);
+
             if (spawnedObjects.TryGetValue(removed.Key, out GameObject spawnedObject))
             {
-                string qrCode = removed.Value != null ? removed.Value.referenceImage.name : null;
-                if (!string.IsNullOrWhiteSpace(qrCode) &&
-                    spawnedObjectsByCode.TryGetValue(qrCode, out GameObject objectByCode) &&
+                if (!string.IsNullOrWhiteSpace(removedQrCode) &&
+                    spawnedObjectsByCode.TryGetValue(removedQrCode, out GameObject objectByCode) &&
                     objectByCode == spawnedObject)
                 {
-                    spawnedObjectsByCode.Remove(qrCode);
+                    spawnedObjectsByCode.Remove(removedQrCode);
                 }
 
                 Destroy(spawnedObject);
@@ -107,6 +115,8 @@ public class QRTrackedImagePlacer : MonoBehaviour
             return;
         }
 
+        ReportTrackingState(trackedImage.trackingState == TrackingState.Tracking);
+
         if (objectToPlace == null)
             return;
 
@@ -126,6 +136,15 @@ public class QRTrackedImagePlacer : MonoBehaviour
         }
 
         UpdateObjectTransform(spawnedObject, trackedImage);
+    }
+
+    private void ReportTrackingState(bool isTracking)
+    {
+        if (lastReportedTrackingState == isTracking)
+            return;
+
+        lastReportedTrackingState = isTracking;
+        TargetTrackingChanged?.Invoke(isTracking);
     }
 
     private void UpdateObjectTransform(GameObject spawnedObject, ARTrackedImage trackedImage)

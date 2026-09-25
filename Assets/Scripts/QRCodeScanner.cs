@@ -13,6 +13,7 @@ public class QRCodeScanner : MonoBehaviour
     public TMP_Text statusText;
     public TMP_Text instructionText;
     public Image scanFrame;
+    public Button retryButton;
     public bool cameraPreviewCoversScreen = true;
 
     [Header("Scan")]
@@ -41,6 +42,7 @@ public class QRCodeScanner : MonoBehaviour
         ConfigureCanvasForMobile();
         ConfigureCameraPreviewRect();
         ConfigureScanReticle();
+        ConfigureRetryButton();
         SetScannerMessage("Solicitando permiso de cámara…", "La cámara se abrirá para leer el código del libro.", MessageTone.Neutral);
 
         if (!Application.HasUserAuthorization(UserAuthorization.WebCam))
@@ -48,7 +50,7 @@ public class QRCodeScanner : MonoBehaviour
 
         if (!Application.HasUserAuthorization(UserAuthorization.WebCam))
         {
-            SetScannerMessage("No se pudo acceder a la cámara", "Activa el permiso de cámara en los ajustes del teléfono y vuelve a abrir la app.", MessageTone.Error);
+            SetScannerMessage("No se pudo acceder a la cámara", "Si ya denegaste el permiso, actívalo en Ajustes y vuelve a intentarlo.", MessageTone.Error);
             Debug.LogError("QRCodeScanner: permiso de camara denegado");
             yield break;
         }
@@ -94,6 +96,8 @@ public class QRCodeScanner : MonoBehaviour
         if (webCamTexture == null || !webCamTexture.isPlaying ||
             webCamTexture.width <= 16 || webCamTexture.height <= 16)
         {
+            if (webCamTexture != null && webCamTexture.isPlaying)
+                webCamTexture.Stop();
             SetScannerMessage("La cámara no respondió", "Cierra otras apps que usen la cámara y vuelve a abrir el escáner.", MessageTone.Error);
             Debug.LogError("QRCodeScanner: la camara no entrego imagen a tiempo");
             yield break;
@@ -219,7 +223,83 @@ public class QRCodeScanner : MonoBehaviour
         else if (tone == MessageTone.Neutral && !isScanning)
             SetReticleColor(new Color(0.35f, 0.9f, 1f, 0.9f));
 
+        if (retryButton != null)
+            retryButton.gameObject.SetActive(tone == MessageTone.Error);
+
         Debug.Log("QRCodeScanner: " + status);
+    }
+
+    public void RetryCameraSetup()
+    {
+        if (webCamTexture != null && webCamTexture.isPlaying)
+            webCamTexture.Stop();
+
+        SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);
+    }
+
+    private void ConfigureRetryButton()
+    {
+        if (retryButton == null)
+        {
+            Canvas canvas = cameraPreview != null ? cameraPreview.GetComponentInParent<Canvas>() : null;
+            Transform parent = canvas != null ? canvas.transform : null;
+            Transform safeArea = parent != null ? parent.Find("SafeArea") : null;
+            if (safeArea != null)
+                parent = safeArea;
+
+            if (parent == null)
+                return;
+
+            GameObject buttonObject = new GameObject("RetryCameraButton", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Button));
+            buttonObject.layer = parent.gameObject.layer;
+            buttonObject.transform.SetParent(parent, false);
+            retryButton = buttonObject.GetComponent<Button>();
+
+            RectTransform buttonRect = buttonObject.GetComponent<RectTransform>();
+            buttonRect.anchorMin = new Vector2(0.22f, 0.055f);
+            buttonRect.anchorMax = new Vector2(0.78f, 0.12f);
+            buttonRect.offsetMin = Vector2.zero;
+            buttonRect.offsetMax = Vector2.zero;
+            buttonRect.anchoredPosition = Vector2.zero;
+            buttonRect.sizeDelta = Vector2.zero;
+
+            Image image = buttonObject.GetComponent<Image>();
+            image.color = new Color(0.06f, 0.15f, 0.21f, 0.96f);
+            retryButton.targetGraphic = image;
+            retryButton.colors = new ColorBlock
+            {
+                normalColor = image.color,
+                highlightedColor = new Color(0.09f, 0.25f, 0.32f, 1f),
+                pressedColor = new Color(0.12f, 0.72f, 0.88f, 1f),
+                selectedColor = new Color(0.09f, 0.25f, 0.32f, 1f),
+                disabledColor = new Color(0.13f, 0.16f, 0.18f, 0.8f),
+                colorMultiplier = 1f,
+                fadeDuration = 0.12f
+            };
+
+            GameObject labelObject = new GameObject("Label", typeof(RectTransform), typeof(CanvasRenderer), typeof(TextMeshProUGUI));
+            labelObject.layer = parent.gameObject.layer;
+            labelObject.transform.SetParent(buttonObject.transform, false);
+            RectTransform labelRect = labelObject.GetComponent<RectTransform>();
+            labelRect.anchorMin = Vector2.zero;
+            labelRect.anchorMax = Vector2.one;
+            labelRect.offsetMin = Vector2.zero;
+            labelRect.offsetMax = Vector2.zero;
+
+            TextMeshProUGUI label = labelObject.GetComponent<TextMeshProUGUI>();
+            label.font = statusText != null ? statusText.font : null;
+            label.text = "Reintentar cámara";
+            label.fontSize = 27f;
+            label.enableAutoSizing = true;
+            label.fontSizeMin = 21f;
+            label.fontSizeMax = 30f;
+            label.alignment = TextAlignmentOptions.Center;
+            label.raycastTarget = false;
+        }
+
+        retryButton.onClick.RemoveListener(RetryCameraSetup);
+        retryButton.onClick.AddListener(RetryCameraSetup);
+        retryButton.gameObject.SetActive(false);
     }
 
     private void ConfigureScanReticle()
