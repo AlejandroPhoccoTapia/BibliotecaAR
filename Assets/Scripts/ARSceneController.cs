@@ -46,6 +46,12 @@ public class ARSceneController : MonoBehaviour
         public string audio_url;
         public string glb_model_url;
         public string qr_image_url;
+        public float ar_marker_width_cm;
+        public float ar_model_size_cm;
+        public float ar_offset_x_cm;
+        public float ar_offset_y_cm;
+        public float ar_offset_z_cm;
+        public float ar_yaw_degrees;
     }
 
     [Header("Content")]
@@ -61,11 +67,6 @@ public class ARSceneController : MonoBehaviour
     public bool addTrackingImageFromApi = true;
     public float trackingImagePhysicalWidthMeters = 0.06f;
     public bool loadGlbModelFromApi = true;
-
-    [Header("Default Runtime GLB Placement")]
-    public float runtimeGlbScale = 0.02f;
-    public Vector3 runtimeGlbLocalOffset = new Vector3(0f, 0.005f, 0f);
-    public Vector3 runtimeGlbLocalEulerAngles = Vector3.zero;
 
     [Header("Optional UI")]
     public TMP_Text titleText;
@@ -87,6 +88,12 @@ public class ARSceneController : MonoBehaviour
     private bool trackingImageSetupFailed;
     private bool modelSetupFailed;
     private bool hasPlaceableModel;
+    private ChapterArPlacement currentPlacement;
+    private ChapterArPlacement savedPlacement;
+    private ARPlacementEditorUI teacherEditor;
+    private GameObject activePresentationRoot;
+    private float activePresentationMaxDimension = 1f;
+    private bool isSavingPlacement;
 
     IEnumerator Start()
     {
@@ -94,6 +101,14 @@ public class ARSceneController : MonoBehaviour
 
         experienceUI = gameObject.AddComponent<ARSceneExperienceUI>();
         experienceUI.Initialize(titleText, narrationText, audioSource, PlayAudio, PauseAudio, RetryContentLoad, MarkChapterCompleted);
+        if (TeacherPreviewSession.IsActive)
+        {
+            teacherEditor = gameObject.AddComponent<ARPlacementEditorUI>();
+            teacherEditor.Initialize(titleText != null ? titleText.font : null,
+                AdjustTeacherPlacement, SaveTeacherPlacement, ResetTeacherPlacement,
+                open => experienceUI.SetReadingExpanded(!open));
+            experienceUI.SetReadingExpanded(false);
+        }
         trackedImagePlacer = FindAnyObjectByType<QRTrackedImagePlacer>();
         if (trackedImagePlacer != null)
             trackedImagePlacer.TargetTrackingChanged += OnTargetTrackingChanged;
@@ -124,6 +139,8 @@ public class ARSceneController : MonoBehaviour
     {
         if (trackedImagePlacer != null)
             trackedImagePlacer.TargetTrackingChanged -= OnTargetTrackingChanged;
+        if (activePresentationRoot != null)
+            Destroy(activePresentationRoot);
     }
 
     public void RetryContentLoad()
@@ -261,7 +278,13 @@ public class ARSceneController : MonoBehaviour
             return;
         }
 
-        ApplyPrefabToPlacers(content, prefabToPlace, false);
+        GameObject presentation = CreatePresentationRoot("LocalModel_" + SanitizeName(content.qrCode));
+        Transform visual = presentation.transform.Find("Visual");
+        GameObject localModel = Instantiate(prefabToPlace, visual);
+        localModel.transform.localPosition = Vector3.zero;
+        localModel.transform.localRotation = Quaternion.identity;
+        FinishPresentationRoot(presentation);
+        ReplacePresentation(content, presentation);
     }
 
     private void ApplyPrefabToPlacers(SceneContent content, GameObject prefabToPlace, bool clearExistingTrackedObjects)
@@ -350,7 +373,9 @@ public class ARSceneController : MonoBehaviour
         trackingImageSetupFailed = false;
         modelSetupFailed = false;
         experienceUI?.SetStatus("Buscando el capítulo…", ARSceneExperienceUI.MessageTone.Info, false);
-        string url = BuildUnitySceneUrl(qrCode);
+        bool teacherPreviewRequest = TeacherPreviewSession.IsActive;
+        string url = teacherPreviewRequest
+            ? "teacher/mobile/scenes/" + qrCode : BuildUnitySceneUrl(qrCode);
         Debug.Log("ARSceneController: consultando API: " + url);
 
         UnityWebRequest request = null;
@@ -358,7 +383,8 @@ public class ARSceneController : MonoBehaviour
 
         try
         {
-            request = UnityWebRequest.Get(url);
+            request = teacherPreviewRequest
+                ? TeacherPreviewSession.GetChapter(qrCode) : UnityWebRequest.Get(url);
             request.timeout = Mathf.Max(1, Mathf.RoundToInt(apiTimeoutSeconds));
             operation = request.SendWebRequest();
         }
@@ -370,7 +396,7 @@ public class ARSceneController : MonoBehaviour
                 request.Dispose();
 
             isLoadingContent = false;
-            if (!TryShowLocalFallback(qrCode, "No se pudo conectar con el servidor."))
+            if (teacherPreviewRequest || !TryShowLocalFallback(qrCode, "No se pudo conectar con el servidor."))
             {
                 ShowUnavailableContent("No se pudo conectar con el servidor. Revisa tu conexión e inténtalo de nuevo.", true);
             }
@@ -393,13 +419,17 @@ public class ARSceneController : MonoBehaviour
 
                 long responseCode = request.responseCode;
                 bool notFound = responseCode == 404;
-                string message = notFound
+                string message = teacherPreviewRequest && responseCode == 401
+                    ? "La vista docente caducó. Vuelve al inicio y entra otra vez."
+                    : notFound
                     ? "Este QR no existe o el libro todavía no está publicado."
                     : request.result == UnityWebRequest.Result.ConnectionError
                         ? "No hay conexión con el servidor. Revisa internet e inténtalo de nuevo."
                         : "No se pudo cargar el capítulo. Inténtalo de nuevo.";
 
-                if (!TryShowLocalFallback(qrCode, message))
+                if (teacherPreviewRequest && responseCode == 401)
+                    TeacherPreviewSession.Clear();
+                if (teacherPreviewRequest || !TryShowLocalFallback(qrCode, message))
                     ShowUnavailableContent(message, !notFound);
 
                 yield break;
@@ -418,16 +448,27 @@ public class ARSceneController : MonoBehaviour
             if (apiScene == null || string.IsNullOrWhiteSpace(apiScene.qr_code))
             {
                 Debug.LogWarning("ARSceneController: API no devolvio una escena valida");
-                if (!TryShowLocalFallback(qrCode, "El servidor devolvió una respuesta incompleta."))
+                if (teacherPreviewRequest || !TryShowLocalFallback(qrCode, "El servidor devolvió una respuesta incompleta."))
                     ShowUnavailableContent("No se pudo interpretar el contenido. Puedes volver a intentarlo.", true);
 
                 yield break;
             }
 
+            currentPlacement = new ChapterArPlacement
+            {
+                ar_marker_width_cm = apiScene.ar_marker_width_cm > 0f ? apiScene.ar_marker_width_cm : 6f,
+                ar_model_size_cm = apiScene.ar_model_size_cm > 0f ? apiScene.ar_model_size_cm : 8f,
+                ar_offset_x_cm = apiScene.ar_offset_x_cm,
+                ar_offset_y_cm = apiScene.ar_offset_y_cm,
+                ar_offset_z_cm = apiScene.ar_offset_z_cm,
+                ar_yaw_degrees = apiScene.ar_yaw_degrees,
+            };
+            savedPlacement = currentPlacement.Copy();
+            teacherEditor?.SetPlacement(currentPlacement);
             SceneContent apiContent = CreateContentFromApi(apiScene);
             ApplyContent(apiContent);
-            experienceUI?.SetCompletionAvailable(StudentAppSession.HasToken);
-            if (StudentAppSession.HasToken)
+            experienceUI?.SetCompletionAvailable(!teacherPreviewRequest && StudentAppSession.HasToken);
+            if (!teacherPreviewRequest && StudentAppSession.HasToken)
                 StartCoroutine(SaveQrProgress(apiScene.qr_code, "open"));
 
             if (loadGlbModelFromApi)
@@ -450,11 +491,181 @@ public class ARSceneController : MonoBehaviour
                 else
                     experienceUI?.SetStatus("Capítulo listo para leer, pero no tiene un modelo 3D.", ARSceneExperienceUI.MessageTone.Warning, false);
             }
+            if (!TeacherPreviewSession.IsActive && (modelSetupFailed || trackingImageSetupFailed || !hasPlaceableModel))
+                experienceUI?.SetReadingExpanded(true);
         }
         finally
         {
             request.Dispose();
             isLoadingContent = false;
+        }
+    }
+
+    private GameObject CreatePresentationRoot(string name)
+    {
+        GameObject root = new GameObject(name);
+        root.SetActive(false);
+        GameObject visual = new GameObject("Visual");
+        visual.transform.SetParent(root.transform, false);
+        return root;
+    }
+
+    private void FinishPresentationRoot(GameObject root)
+    {
+        Transform visual = root.transform.Find("Visual");
+        Renderer[] renderers = visual.GetComponentsInChildren<Renderer>(true);
+        Bounds combined = new Bounds();
+        bool hasBounds = false;
+        foreach (Renderer renderer in renderers)
+        {
+            Bounds meshBounds;
+            if (renderer is SkinnedMeshRenderer skinned)
+                meshBounds = skinned.localBounds;
+            else
+            {
+                MeshFilter filter = renderer.GetComponent<MeshFilter>();
+                if (filter == null || filter.sharedMesh == null)
+                    continue;
+                meshBounds = filter.sharedMesh.bounds;
+            }
+
+            Matrix4x4 matrix = root.transform.worldToLocalMatrix * renderer.transform.localToWorldMatrix;
+            Vector3 min = meshBounds.min;
+            Vector3 max = meshBounds.max;
+            for (int x = 0; x < 2; x++)
+                for (int y = 0; y < 2; y++)
+                    for (int z = 0; z < 2; z++)
+                    {
+                        Vector3 point = matrix.MultiplyPoint3x4(new Vector3(
+                            x == 0 ? min.x : max.x, y == 0 ? min.y : max.y, z == 0 ? min.z : max.z));
+                        if (!hasBounds)
+                        {
+                            combined = new Bounds(point, Vector3.zero);
+                            hasBounds = true;
+                        }
+                        else
+                            combined.Encapsulate(point);
+                    }
+        }
+
+        if (!hasBounds)
+        {
+            activePresentationMaxDimension = 1f;
+            Debug.LogWarning("ARSceneController: modelo sin geometría medible; se usará escala predeterminada.");
+        }
+        else
+        {
+            activePresentationMaxDimension = Mathf.Max(combined.size.x, combined.size.y, combined.size.z, 0.0001f);
+            visual.localPosition = new Vector3(-combined.center.x, -combined.min.y, -combined.center.z);
+            BoxCollider collider = root.AddComponent<BoxCollider>();
+            collider.center = new Vector3(0f, combined.size.y * 0.5f, 0f);
+            collider.size = new Vector3(Mathf.Max(combined.size.x, 0.01f),
+                Mathf.Max(combined.size.y, 0.01f), Mathf.Max(combined.size.z, 0.01f));
+        }
+        root.AddComponent<ARStoryInteraction>();
+        root.transform.localScale = Vector3.one * GetPresentationScale();
+    }
+
+    private float GetPresentationScale()
+    {
+        float desiredMeters = (currentPlacement != null && currentPlacement.ar_model_size_cm > 0f
+            ? currentPlacement.ar_model_size_cm : 8f) * 0.01f;
+        return desiredMeters / Mathf.Max(activePresentationMaxDimension, 0.0001f);
+    }
+
+    private void ReplacePresentation(SceneContent content, GameObject root)
+    {
+        GameObject previous = activePresentationRoot;
+        activePresentationRoot = root;
+        ApplyPrefabToPlacers(content, root, true);
+        ApplyCurrentPlacement();
+        if (previous != null)
+            Destroy(previous);
+    }
+
+    private void ApplyCurrentPlacement()
+    {
+        if (currentPlacement == null || activePresentationRoot == null)
+            return;
+        float scale = GetPresentationScale();
+        QRTrackedImagePlacer imagePlacer = FindAnyObjectByType<QRTrackedImagePlacer>();
+        if (imagePlacer != null)
+            imagePlacer.UpdatePlacement(
+                new Vector3(currentPlacement.ar_offset_x_cm, currentPlacement.ar_offset_y_cm,
+                    currentPlacement.ar_offset_z_cm) * 0.01f,
+                new Vector3(0f, currentPlacement.ar_yaw_degrees, 0f), scale);
+        else
+            activePresentationRoot.transform.localScale = Vector3.one * scale;
+    }
+
+    private void AdjustTeacherPlacement(int field, float step)
+    {
+        if (currentPlacement == null)
+            return;
+        switch (field)
+        {
+            case 0:
+                currentPlacement.ar_marker_width_cm = Mathf.Clamp(currentPlacement.ar_marker_width_cm + step, 2f, 30f);
+                teacherEditor?.SetMessage("El ancho del marcador se aplica después de guardar y volver a escanear.");
+                break;
+            case 1:
+                currentPlacement.ar_model_size_cm = Mathf.Clamp(currentPlacement.ar_model_size_cm + step, 1f, 50f);
+                break;
+            case 2:
+                currentPlacement.ar_offset_x_cm = Mathf.Clamp(currentPlacement.ar_offset_x_cm + step, -50f, 50f);
+                break;
+            case 3:
+                currentPlacement.ar_offset_y_cm = Mathf.Clamp(currentPlacement.ar_offset_y_cm + step, -50f, 50f);
+                break;
+            case 4:
+                currentPlacement.ar_offset_z_cm = Mathf.Clamp(currentPlacement.ar_offset_z_cm + step, -50f, 50f);
+                break;
+            case 5:
+                currentPlacement.ar_yaw_degrees = Mathf.Clamp(currentPlacement.ar_yaw_degrees + step, -180f, 180f);
+                break;
+        }
+        ApplyCurrentPlacement();
+        teacherEditor?.SetPlacement(currentPlacement);
+    }
+
+    private void ResetTeacherPlacement()
+    {
+        if (savedPlacement == null)
+            return;
+        currentPlacement = savedPlacement.Copy();
+        ApplyCurrentPlacement();
+        teacherEditor?.SetPlacement(currentPlacement);
+        teacherEditor?.SetMessage("Cambios sin guardar descartados.");
+    }
+
+    private void SaveTeacherPlacement()
+    {
+        if (!isSavingPlacement && TeacherPreviewSession.IsActive && currentPlacement != null)
+            StartCoroutine(SaveTeacherPlacementRequest());
+    }
+
+    private IEnumerator SaveTeacherPlacementRequest()
+    {
+        isSavingPlacement = true;
+        teacherEditor?.SetMessage("Guardando ajuste del capítulo…");
+        ChapterArPlacement submitted = currentPlacement.Copy();
+        using (UnityWebRequest request = TeacherPreviewSession.SavePlacement(scannedQrCode, submitted))
+        {
+            yield return request.SendWebRequest();
+            isSavingPlacement = false;
+            if (request.result != UnityWebRequest.Result.Success)
+            {
+                if (request.responseCode == 401)
+                {
+                    TeacherPreviewSession.Clear();
+                    teacherEditor?.SetMessage("Tu vista docente caducó. Vuelve al inicio para entrar otra vez.");
+                }
+                else
+                    teacherEditor?.SetMessage("No se guardó. Comprueba internet y reintenta.");
+                yield break;
+            }
+            savedPlacement = submitted;
+            teacherEditor?.SetMessage("Guardado. Si cambiaste el marcador, escanea el QR de nuevo.");
         }
     }
 
@@ -504,10 +715,10 @@ public class ARSceneController : MonoBehaviour
             yield break;
         }
 
-        GameObject modelRoot = new GameObject("RuntimeGLB_" + SanitizeName(content.qrCode));
-        modelRoot.SetActive(false);
+        GameObject modelRoot = CreatePresentationRoot("RuntimeGLB_" + SanitizeName(content.qrCode));
+        Transform visual = modelRoot.transform.Find("Visual");
 
-        Task<bool> instantiateTask = gltfImport.InstantiateMainSceneAsync(modelRoot.transform);
+        Task<bool> instantiateTask = gltfImport.InstantiateMainSceneAsync(visual);
         while (!instantiateTask.IsCompleted)
             yield return null;
 
@@ -520,33 +731,9 @@ public class ARSceneController : MonoBehaviour
             yield break;
         }
 
-        modelRoot.transform.localPosition = Vector3.zero;
-        modelRoot.transform.localRotation = Quaternion.identity;
-        modelRoot.transform.localScale = Vector3.one * runtimeGlbScale;
-        content.prefab = modelRoot;
-
-        ApplyRuntimeGlbPlacement();
-        ApplyPrefabToPlacers(content, modelRoot, true);
+        FinishPresentationRoot(modelRoot);
+        ReplacePresentation(content, modelRoot);
         Debug.Log("ARSceneController: GLB runtime listo para QR: " + content.qrCode);
-    }
-
-    private void ApplyRuntimeGlbPlacement()
-    {
-        QRTrackedImagePlacer imagePlacer = FindAnyObjectByType<QRTrackedImagePlacer>();
-        if (imagePlacer == null)
-            return;
-
-        imagePlacer.localOffset = runtimeGlbLocalOffset;
-        imagePlacer.localEulerAngles = runtimeGlbLocalEulerAngles;
-
-        Debug.Log(
-            "ARSceneController: placement GLB runtime scale=" +
-            runtimeGlbScale +
-            " offset=" +
-            runtimeGlbLocalOffset +
-            " rotation=" +
-            runtimeGlbLocalEulerAngles
-        );
     }
 
     private IEnumerator LoadAudioFromUrl(string audioUrl)
@@ -672,7 +859,8 @@ public class ARSceneController : MonoBehaviour
                 addImageJob = mutableLibrary.ScheduleAddImageWithValidationJob(
                     qrTexture,
                     apiScene.qr_code,
-                    trackingImagePhysicalWidthMeters
+                    apiScene.ar_marker_width_cm > 0f
+                        ? apiScene.ar_marker_width_cm * 0.01f : trackingImagePhysicalWidthMeters
                 );
             }
             catch (Exception exception)
@@ -762,6 +950,7 @@ public class ARSceneController : MonoBehaviour
     {
         ApplyContent(CreateUnknownContent(scannedQrCode));
         experienceUI?.SetStatus(message ?? "No encontramos este contenido. Comprueba que el libro esté publicado.", ARSceneExperienceUI.MessageTone.Error, canRetry);
+        experienceUI?.SetReadingExpanded(true);
     }
 
     private void SetTrackingHint()
@@ -794,6 +983,8 @@ public class ARSceneController : MonoBehaviour
     private void OnTargetTrackingChanged(bool isTracking)
     {
         experienceUI?.HandleTrackingState(isTracking);
+        if (!isTracking && !TeacherPreviewSession.IsActive)
+            experienceUI?.SetReadingExpanded(true);
     }
 
     private string BuildUnitySceneUrl(string qrCode)

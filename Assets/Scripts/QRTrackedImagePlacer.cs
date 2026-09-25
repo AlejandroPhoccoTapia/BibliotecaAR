@@ -64,6 +64,26 @@ public class QRTrackedImagePlacer : MonoBehaviour
         Debug.Log("QRTrackedImagePlacer: contenido AR reemplazado por " + (objectToPlace != null ? objectToPlace.name : "null"));
     }
 
+    public void UpdatePlacement(Vector3 offset, Vector3 eulerAngles, float uniformScale)
+    {
+        localOffset = offset;
+        localEulerAngles = eulerAngles;
+        if (objectToPlace != null)
+            objectToPlace.transform.localScale = Vector3.one * uniformScale;
+        foreach (GameObject instance in spawnedObjects.Values)
+        {
+            if (instance == null)
+                continue;
+            instance.transform.localPosition = localOffset;
+            instance.transform.localRotation = Quaternion.Euler(localEulerAngles);
+            ARTrackedVisibility visibility = instance.GetComponent<ARTrackedVisibility>();
+            if (visibility != null)
+                visibility.SetBaseScale(Vector3.one * uniformScale);
+            else
+                instance.transform.localScale = Vector3.one * uniformScale;
+        }
+    }
+
     private void OnTrackedImagesChanged(ARTrackablesChangedEventArgs<ARTrackedImage> args)
     {
         foreach (ARTrackedImage trackedImage in args.added)
@@ -154,7 +174,13 @@ public class QRTrackedImagePlacer : MonoBehaviour
         spawnedObject.transform.localRotation = Quaternion.Euler(localEulerAngles);
         
         bool shouldShow = !hideWhenNotTracking || trackedImage.trackingState == TrackingState.Tracking;
-        spawnedObject.SetActive(shouldShow);
+        ARTrackedVisibility visibility = spawnedObject.GetComponent<ARTrackedVisibility>();
+        if (visibility == null)
+        {
+            visibility = spawnedObject.AddComponent<ARTrackedVisibility>();
+            visibility.SetBaseScale(spawnedObject.transform.localScale);
+        }
+        visibility.SetTracked(shouldShow);
     }
 
     private string GetRequiredCode()

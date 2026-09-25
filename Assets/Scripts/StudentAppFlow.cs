@@ -21,6 +21,8 @@ public sealed class StudentAppFlow : MonoBehaviour
     private Button scannerHomeButton;
     private TMP_Text messageText;
     private TMP_InputField codeInput;
+    private TMP_InputField teacherUserInput;
+    private TMP_InputField teacherPasswordInput;
     private TMP_Text rememberLabel;
     private Button rememberButton;
     private RawImage facePreview;
@@ -61,7 +63,17 @@ public sealed class StudentAppFlow : MonoBehaviour
         readingAudio = gameObject.AddComponent<AudioSource>();
         readingAudio.playOnAwake = false;
 
-        if (StudentAppSession.HasToken)
+        if (TeacherPreviewSession.IsActive)
+        {
+            if (StudentAppSession.OpenScannerOnLoad)
+            {
+                StudentAppSession.OpenScannerOnLoad = false;
+                RequestScan();
+            }
+            else
+                ShowTeacherReady();
+        }
+        else if (StudentAppSession.HasToken)
         {
             ShowLoading("Recuperando tu biblioteca…");
             StartCoroutine(ValidateSavedSession());
@@ -200,8 +212,102 @@ public sealed class StudentAppFlow : MonoBehaviour
         }
 
         messageText = Text("LoginMessage", safeArea, string.Empty, 30f,
-            new Vector2(0.10f, 0.04f), new Vector2(0.90f, 0.15f), TextAlignmentOptions.Center,
+            new Vector2(0.10f, 0.015f), new Vector2(0.64f, 0.13f), TextAlignmentOptions.Center,
             new Color(0.72f, 0.16f, 0.16f));
+        Button("TeacherMode", safeArea, "Docente", new Vector2(0.67f, 0.035f),
+            new Vector2(0.94f, 0.105f), Color.white, ShowTeacherLogin);
+    }
+
+    private void ShowTeacherLogin()
+    {
+        ClearView();
+        Text("TeacherTitle", safeArea, "Vista docente", 58f,
+            new Vector2(0.09f, 0.80f), new Vector2(0.91f, 0.93f), TextAlignmentOptions.Center, Ink);
+        Text("TeacherHelp", safeArea, "Entra para ajustar el modelo sobre la página. La sesión dura 30 minutos.", 32f,
+            new Vector2(0.11f, 0.65f), new Vector2(0.89f, 0.79f), TextAlignmentOptions.Center, Muted);
+        teacherUserInput = Input("TeacherUser", safeArea, "Usuario docente",
+            new Vector2(0.10f, 0.52f), new Vector2(0.90f, 0.60f));
+        teacherUserInput.characterLimit = 150;
+        teacherUserInput.contentType = TMP_InputField.ContentType.Standard;
+        teacherPasswordInput = Input("TeacherPassword", safeArea, "Contraseña",
+            new Vector2(0.10f, 0.41f), new Vector2(0.90f, 0.49f));
+        teacherPasswordInput.characterLimit = 128;
+        teacherPasswordInput.contentType = TMP_InputField.ContentType.Password;
+        Button("EnterTeacher", safeArea, "Entrar y escanear", new Vector2(0.13f, 0.27f),
+            new Vector2(0.87f, 0.35f), Accent, LoginTeacher);
+        Button("BackToStudent", safeArea, "Volver", new Vector2(0.20f, 0.17f),
+            new Vector2(0.80f, 0.24f), Color.white,
+            () => { if (StudentAppSession.HasToken && library != null) ShowHome(); else ShowLogin(false); });
+        messageText = Text("TeacherMessage", safeArea, string.Empty, 30f,
+            new Vector2(0.10f, 0.05f), new Vector2(0.90f, 0.15f), TextAlignmentOptions.Center,
+            new Color(0.72f, 0.16f, 0.16f));
+    }
+
+    private void ShowTeacherReady()
+    {
+        ClearView();
+        Text("TeacherReady", safeArea, "Vista docente activa", 56f,
+            new Vector2(0.09f, 0.72f), new Vector2(0.91f, 0.90f), TextAlignmentOptions.Center, Ink);
+        Text("TeacherReadyHelp", safeArea, "Escanea el QR del capítulo para ajustar el modelo sobre la página.", 34f,
+            new Vector2(0.11f, 0.53f), new Vector2(0.89f, 0.69f), TextAlignmentOptions.Center, Muted);
+        Button("TeacherScan", safeArea, "Escanear capítulo", new Vector2(0.13f, 0.32f),
+            new Vector2(0.87f, 0.41f), Accent, RequestScan);
+        Button("TeacherExit", safeArea, "Salir del modo docente", new Vector2(0.13f, 0.21f),
+            new Vector2(0.87f, 0.29f), Color.white, ExitTeacherMode);
+    }
+
+    private void LoginTeacher()
+    {
+        if (busy || teacherUserInput == null || teacherPasswordInput == null)
+            return;
+        string username = teacherUserInput.text.Trim();
+        string password = teacherPasswordInput.text;
+        if (string.IsNullOrEmpty(username) || string.IsNullOrEmpty(password))
+        {
+            SetMessage("Escribe tu usuario y contraseña.");
+            return;
+        }
+        StartCoroutine(SubmitTeacherLogin(username, password));
+    }
+
+    private IEnumerator SubmitTeacherLogin(string username, string password)
+    {
+        busy = true;
+        SetMessage("Comprobando acceso…");
+        using (UnityWebRequest request = TeacherPreviewSession.Login(username, password))
+        {
+            yield return request.SendWebRequest();
+            busy = false;
+            if (request.result != UnityWebRequest.Result.Success)
+            {
+                SetMessage(request.responseCode == 403
+                    ? "Datos incorrectos o cuenta sin permiso docente."
+                    : StudentApi.ErrorMessage(request));
+                yield break;
+            }
+            TeacherPreviewLoginResult result = JsonUtility.FromJson<TeacherPreviewLoginResult>(request.downloadHandler.text);
+            if (result == null || string.IsNullOrEmpty(result.token))
+            {
+                SetMessage("No se pudo abrir la vista docente.");
+                yield break;
+            }
+            TeacherPreviewSession.Set(result.token);
+        }
+        RequestScan();
+    }
+
+    private void ExitTeacherMode()
+    {
+        TeacherPreviewSession.Clear();
+        if (StudentAppSession.HasToken && library != null)
+            ShowHome();
+        else if (StudentAppSession.HasToken)
+        {
+            ShowLoading("Recuperando tu biblioteca…");
+            StartCoroutine(ValidateSavedSession());
+        }
+        else
+            ShowLogin(false);
     }
 
     private void ToggleRemember()
@@ -430,6 +536,8 @@ public sealed class StudentAppFlow : MonoBehaviour
             Label(content, "EXPLORADOS", 28f, Accent);
             AddBooks(content, library.recent_books, string.Empty);
         }
+        Label(content, "PARA DOCENTES", 28f, Accent);
+        ListButton(content, "Ajustar modelos sobre la página", ShowTeacherLogin);
         Button("ScanFromLibrary", safeArea, "Escanear QR", new Vector2(0.12f, 0.02f),
             new Vector2(0.88f, 0.105f), Accent, RequestScan);
     }
@@ -642,11 +750,16 @@ public sealed class StudentAppFlow : MonoBehaviour
         StopReadingAudio();
         ScanRequested = true;
         overlay.gameObject.SetActive(false);
+        TMP_Text scannerCaption = scannerHomeButton.GetComponentInChildren<TMP_Text>();
+        if (scannerCaption != null)
+            scannerCaption.text = TeacherPreviewSession.IsActive ? "Salir vista docente" : "← Biblioteca";
         scannerHomeButton.gameObject.SetActive(true);
     }
 
     private void ReturnToLibrary()
     {
+        if (TeacherPreviewSession.IsActive)
+            TeacherPreviewSession.Clear();
         StudentAppSession.OpenScannerOnLoad = false;
         SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);
     }
@@ -698,6 +811,8 @@ public sealed class StudentAppFlow : MonoBehaviour
         StopFaceCamera();
         messageText = null;
         codeInput = null;
+        teacherUserInput = null;
+        teacherPasswordInput = null;
         rememberLabel = null;
         rememberButton = null;
         for (int i = safeArea.childCount - 1; i >= 0; i--)

@@ -214,7 +214,12 @@ public sealed class ARSceneExperienceUI : MonoBehaviour
         if (isTracking)
             SetStatus("QR detectado. Mantén el teléfono estable para ver el contenido.", MessageTone.Success, false);
         else
-            SetStatus("Buscando el QR… Muévete despacio y mejora la iluminación.", MessageTone.Info, false);
+            SetStatus("Puedes seguir leyendo. Para recuperar el modelo, enfoca el QR con buena luz.", MessageTone.Info, false);
+    }
+
+    public void SetReadingExpanded(bool expanded)
+    {
+        SetExpanded(expanded);
     }
 
     private void ConfigureSafeArea()

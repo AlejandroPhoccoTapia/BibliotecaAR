@@ -67,6 +67,10 @@ Assets/
     ARSceneController.cs    API, selección, GLB, audio y QR dinámico
     ARSceneExperienceUI.cs Estados AR, texto desplazable y controles accesibles
     QRTrackedImagePlacer.cs Colocación/visibilidad sobre imagen
+    ARTrackedVisibility.cs  Transición suave al perder/recuperar seguimiento
+    ARStoryInteraction.cs   Toque del modelo y clips Idle/Walk
+    ARPlacementEditorUI.cs  Ajuste docente de tamaño y posición en el teléfono
+    TeacherPreviewSession.cs Token docente temporal y peticiones de ajuste
     ARRaycastPlaceObject.cs Alternativa mediante toque/raycast
     ARPlaneDebugLogger.cs   Diagnóstico XR y planos
     ZXingTest.cs            Log de disponibilidad de ZXing
@@ -97,6 +101,12 @@ En `QRScanScene`, `StudentAppFlow` presenta acceso alternativo por código perso
 
 `studentApiBaseUrl` de `QRCodeScanner` configura la API de acceso y progreso; por defecto usa `https://bibliotecaar-backend.onrender.com/api`. Para desarrollo local en un teléfono, cambiarlo a la IP LAN del backend y mantener coherente `apiBaseUrl` de `ARSceneController`. Ambas rutas necesitan internet o red local accesible.
 
+### Vista docente y calibración física
+
+Desde la pantalla de acceso o la biblioteca estudiantil, «Docente» permite entrar con una cuenta `is_staff=True` del backend. El token temporal se mantiene solo en memoria y dura como máximo 30 minutos. El docente escanea el QR impreso, incluso si el libro sigue en borrador, y pulsa «Ajustar modelo». Los controles cambian en directo el ancho del marcador, el tamaño máximo del modelo, desplazamiento lateral/vertical/sobre la página y giro. «Guardar» envía los valores a Django; «Deshacer» recupera la última versión guardada. El ancho del marcador entra en vigor cuando se vuelve a escanear y se crea la referencia AR. Si ese QR ya viene dentro de la biblioteca estática de Unity, hay que corregir también su tamaño físico en el asset de referencia o quitar esa entrada: una referencia existente no se reemplaza dinámicamente.
+
+El ancho del marcador debe medirse en el QR **impreso**, de lado a lado de la imagen que ARCore reconoce. `ar_model_size_cm` define la dimensión mayor de la geometría (alto, ancho o profundidad), no cada eje por separado. Unity mide los límites del modelo, centra su base sobre el marcador y calcula una escala para obtener esos centímetros; por ello modelos importados en unidades distintas terminan con una referencia física comparable. Los desplazamientos están en centímetros respecto al centro del QR; el giro está en grados alrededor del eje vertical. Cambiar el tamaño del marcador no cambia el tamaño configurado del modelo: son ajustes independientes. Probar con el teléfono sobre la página real antes de publicar.
+
 ### Contenido
 
 `ARSceneController` construye diccionarios de contenido/bindings locales y consulta:
@@ -115,7 +125,7 @@ Si falla la API o el JSON y `fallbackToLocalContent` está activo, busca conteni
 
 ### Seguimiento y modelo
 
-`ARTrackedImageManager` reconoce referencias. `QRTrackedImagePlacer` compara su nombre con el código escaneado, instancia el recurso como hijo de la imagen y actualiza posición/rotación. Puede ocultarlo cuando deja de estar en estado Tracking.
+`ARTrackedImageManager` reconoce referencias. `QRTrackedImagePlacer` compara su nombre con el código escaneado, instancia el recurso como hijo de la imagen y actualiza posición/rotación. Ante pérdida breve de seguimiento conserva el modelo 0,45 s y luego lo reduce suavemente; cuando vuelve el seguimiento lo muestra de nuevo. El texto y audio permanecen disponibles y la tarjeta de lectura se abre para continuar aunque el modelo o el seguimiento fallen.
 
 El estado del QR seguido se comunica a la interfaz. Si no hay seguimiento, se guía al usuario para volver a encuadrar el impreso, moverse lentamente y mejorar la iluminación.
 
@@ -123,7 +133,9 @@ Leer el texto QR con ZXing y estimar su pose con ARCore son pasos diferentes. Un
 
 Para capítulos de Django, el controlador descarga `qr_image_url` y usa `ScheduleAddImageWithValidationJob` en una biblioteca mutable. Si la biblioteca no admite esa operación o se rechaza la imagen, los logs registran el problema y no se garantiza la colocación.
 
-glTFast carga `glb_model_url`, instancia un objeto raíz y lo entrega al colocador. Escala y orientación son parámetros globales del controlador, no metadatos por capítulo de la API. Si falla, la alternativa local depende de que haya un prefab configurado; no toda clave recibida tiene necesariamente un binding.
+glTFast carga `glb_model_url`, instancia un objeto raíz y lo entrega al colocador. Los ajustes por capítulo anteriores se aplican tanto al GLB como al prefab local. Si falla la descarga, la alternativa local depende de que haya un prefab configurado; no toda clave recibida tiene necesariamente un binding.
+
+Un toque sobre el modelo activa la interacción: con un clip GLB llamado `Walk`, `Walking` o `Caminar`, lo reproduce y desplaza el modelo 2,5 cm sobre la página. Al terminar intenta volver a `Idle`, `Quieto` o `Stand`. Un OBJ/prefab estático también se desplaza, pero sus patas no se animan: para una hormiga que camina de verdad hay que subir un GLB con rig/huesos y esos clips exportados. La API almacena el archivo, no crea animaciones automáticamente. Conviene que el clip de caminar sea un ciclo sobre el sitio, pues el desplazamiento lo hace Unity. La detección del toque usa un colisionador construido a partir de los límites visuales del modelo.
 
 ### Audio y navegación
 
@@ -161,11 +173,9 @@ En el objeto con `ARSceneController`:
 | `apiTimeoutSeconds` | `75`; da margen al arranque del servicio gratuito de Render en peticiones API/audio/imagen. La espera de ARSession se limita a 15 segundos. No es timeout general de glTFast. |
 | `fallbackToLocalContent` | `true`. |
 | `addTrackingImageFromApi` | `true`. |
-| `trackingImagePhysicalWidthMeters` | `0.06`; ajustarlo al ancho físico real de la imagen impresa. |
+| `trackingImagePhysicalWidthMeters` | `0.06`; respaldo para APIs antiguas sin medida AR. Los capítulos actuales envían el ancho individual en centímetros. |
 | `loadGlbModelFromApi` | `true`. |
-| `runtimeGlbScale` | `0.02`. |
-| `runtimeGlbLocalOffset` | `(0, 0.005, 0)`. |
-| `runtimeGlbLocalEulerAngles` | `(0, 0, 0)`. |
+| Ajustes físicos por capítulo | Llegan de la API (`ar_marker_width_cm`, `ar_model_size_cm`, desplazamientos y giro); no se calibran en el Inspector global. |
 | `prefabBindings` | Mapeo de claves a prefabs locales. |
 | `fallbackPrefab` | Alternativa local opcional. |
 
@@ -190,11 +200,17 @@ Ejemplo ilustrativo con nombres usados en `UnitySceneApiResponse`:
   "cover_url": null,
   "audio_url": "https://media.example/scenes/audio/hormiga.mp3",
   "glb_model_url": "https://media.example/scenes/models/hormiga.glb",
-  "qr_image_url": "https://media.example/scenes/qr/libro-demo-scene-a1b2c3d4e5.png"
+  "qr_image_url": "https://media.example/scenes/qr/libro-demo-scene-a1b2c3d4e5.png",
+  "ar_marker_width_cm": 6,
+  "ar_model_size_cm": 8,
+  "ar_offset_x_cm": 0,
+  "ar_offset_y_cm": 0.5,
+  "ar_offset_z_cm": 0,
+  "ar_yaw_degrees": 0
 }
 ```
 
-Endpoint público: solo libros publicados; código inexistente/libro borrador produce 404. Recursos ausentes son null. `cover_url` existe en el DTO, pero el controlador no implementa la carga de portada. No hay transformaciones 3D por capítulo en este contrato.
+Endpoint público: solo libros publicados; código inexistente/libro borrador produce 404. Recursos ausentes son null. `cover_url` existe en el DTO, pero el controlador no implementa la carga de portada. La vista docente usa `GET/PATCH /api/teacher/mobile/scenes/<qr_code>/` con `Authorization: TeacherPreview <token>` y solo modifica los seis campos de ajuste físico.
 
 Supabase puede servir archivos, pero Unity no necesita claves ni acceso directo a PostgreSQL. La API no convierte modelos ni sintetiza audio: se suben recursos preparados.
 
@@ -203,10 +219,10 @@ Supabase puede servir archivos, pero Unity no necesita claves ni acceso directo 
 1. Clonar los tres repositorios y leer sus README.
 2. Instalar Django, aplicar migraciones, crear docente y arrancar API según el README backend.
 3. En el panel ejecutar `npm ci`, `npm run dev` e iniciar sesión.
-4. Crear libro publicado y capítulo con texto, `prefab_key`, GLB válido y audio opcional. Obtener su QR.
+4. Crear libro publicado y capítulo con texto, un `prefab_key` local o un GLB válido, y audio opcional. Obtener su QR.
 5. Comprobar JSON de `/api/unity/scenes/<qr_code>/` y acceso a cada archivo desde la red del teléfono.
 6. Abrir con Unity 6000.3.19f1, restaurar paquetes y resolver cualquier error de importación/compilación.
-7. Configurar API, bindings, UI/audio y ancho de QR en el Inspector.
+7. Configurar API, bindings y UI/audio en el Inspector; medir y guardar el ancho del QR impreso por capítulo.
 8. Seleccionar Android en Build Profiles. Revisar ARCore en XR Plug-in Management, IL2CPP, ARM64, SDK e identificador de aplicación. El proyecto conserva valores de identidad por defecto que deben revisarse antes de distribuir.
 9. Incluir las dos escenas en orden, compilar e instalar en Android ARCore.
 10. Iniciar en QRScanScene, dar permiso, escanear y comprobar texto, audio, modelo, escala, movimiento, pérdida/recuperación del tracking y vuelta al escáner.
@@ -223,7 +239,7 @@ Consultar consola y Android Logcat; los logs usan prefijos `QRCodeScanner:`, `AR
 | QR leído sin capítulo | LastCode, URL, red, timeout, JSON y publicación. |
 | Capítulo sin modelo | URL GLB, logs glTFast, binding y tracking. |
 | QR dinámico sin tracking | Validación de imagen, biblioteca mutable, nombre y ancho físico. |
-| Tamaño/orientación incorrectos | Transformación original del modelo y parámetros runtimeGlb. |
+| Tamaño/orientación incorrectos | Medir QR impreso; abrir vista docente en móvil y ajustar tamaño, posición y giro; revisar si el QR ya está en la biblioteca estática. |
 | Materiales incorrectos en Android | Importación y shaders glTFast disponibles en el build; revisar GraphicsSettings. |
 | Toque no coloca objetos | El script y los planos están deshabilitados en esta escena. |
 | Fallo solo remoto | URL real, acceso público a recursos, HTTPS y respuesta del servidor. |
@@ -236,13 +252,14 @@ Abrir ARScene directamente sin escaneo previo no aporta un código válido. Veri
 - «Recordar en este dispositivo» persiste el token en `PlayerPrefs`, no en el almacén seguro del sistema. Reforzar ese almacenamiento antes de uso con datos personales reales.
 - El endpoint Unity heredado es público; conocer un QR publicado permite consultar su escena. Las asignaciones no restringen ese acceso.
 - El progreso lector se guarda en el backend; no hay evaluaciones, analítica educativa ni biblioteca descargada para uso offline completo.
-- La escala es global, sin editor de transformación por capítulo ni normalización automática de GLB.
+- La normalización usa los límites del modelo en reposo; animaciones que extiendan mucho una extremidad pueden requerir ajuste manual en móvil.
+- El modo docente usa un token temporal en memoria; el QR de una biblioteca estática conserva el ancho configurado en el asset de Unity.
 - Validar en dispositivo tracking, formatos de audio, materiales y ciclo de carga/liberación de recursos.
 - No hay pruebas automatizadas propias de estos flujos; `ZXingTest` solo escribe un log.
 - El modo de raycast es alternativo: al activarlo, probar también qué ocurre si el GLB termina de descargarse después de colocar un objeto.
 - El panel tiene problemas de listas multipart y valores vacíos; consultar su README antes de atribuir esos fallos a Unity.
 
-No se compiló ni ejecutó la aplicación Android al redactar esta documentación, ni se comprobó el servicio remoto. La validación integral requiere un dispositivo real y los tres componentes.
+Los scripts C# se compilaron con el compilador Roslyn y las referencias del proyecto Unity, sin errores. No se compiló ni ejecutó la aplicación Android al redactar esta documentación, ni se comprobó el servicio remoto. La validación integral requiere un dispositivo real y los tres componentes.
 
 ## 11. Guía para el siguiente asistente
 
