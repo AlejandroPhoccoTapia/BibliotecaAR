@@ -16,6 +16,9 @@ public class QRCodeScanner : MonoBehaviour
     public Button retryButton;
     public bool cameraPreviewCoversScreen = true;
 
+    [Header("Student API")]
+    public string studentApiBaseUrl = "https://bibliotecaar-backend.onrender.com/api";
+
     [Header("Scan")]
     public float scanInterval = 0.25f;
     public float cameraStartupTimeoutSeconds = 8f;
@@ -56,6 +59,13 @@ public class QRCodeScanner : MonoBehaviour
         ConfigureRetryButton();
         ApplyScannerLayout();
         SetScannerMessage("Solicitando permiso de cámara…", "La cámara se abrirá para leer el código del libro.", MessageTone.Neutral);
+
+        if (!string.IsNullOrWhiteSpace(studentApiBaseUrl))
+            StudentAppSession.ApiBaseUrl = studentApiBaseUrl.TrimEnd('/');
+        StudentAppFlow studentFlow = gameObject.AddComponent<StudentAppFlow>();
+        studentFlow.Initialize(this, statusText != null ? statusText.font : null);
+        while (!studentFlow.ScanRequested)
+            yield return null;
 
         if (!Application.HasUserAuthorization(UserAuthorization.WebCam))
             yield return Application.RequestUserAuthorization(UserAuthorization.WebCam);
@@ -266,6 +276,7 @@ public class QRCodeScanner : MonoBehaviour
         if (webCamTexture != null && webCamTexture.isPlaying)
             webCamTexture.Stop();
 
+        StudentAppSession.OpenScannerOnLoad = true;
         SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);
     }
 
@@ -329,7 +340,7 @@ public class QRCodeScanner : MonoBehaviour
         return cardObject.GetComponent<RectTransform>();
     }
 
-    private static Sprite GetMessageCardSprite()
+    internal static Sprite GetMessageCardSprite()
     {
         if (messageCardSprite != null)
             return messageCardSprite;

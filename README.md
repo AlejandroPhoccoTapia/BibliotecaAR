@@ -16,7 +16,7 @@ Documentación contrastada con código y escenas el **24 de septiembre de 2026**
 Docente -> React -> Django -> base de datos / storage
                      ^
                      | GET /api/unity/scenes/<qr_code>/
-Android: QRScanScene -> ScannedQRData.LastCode -> ARScene
+Android: QRScanScene (acceso, biblioteca y escáner) -> ScannedQRData.LastCode -> ARScene
                                                    |
                                       texto + audio + modelo 3D
                                                    |
@@ -61,6 +61,8 @@ Assets/
     ARScene.unity           Entorno XR, contenido y controles
   Scripts/
     QRCodeScanner.cs        Permiso/cámara, ZXing y transición
+    StudentAppFlow.cs       Acceso por código/rostro, biblioteca y lectura sin QR
+    StudentAppSession.cs    Sesión, modelos JSON y peticiones a la API estudiantil
     ScannedQRData.cs        LastCode estático entre escenas
     ARSceneController.cs    API, selección, GLB, audio y QR dinámico
     ARSceneExperienceUI.cs Estados AR, texto desplazable y controles accesibles
@@ -83,9 +85,17 @@ ProjectSettings/           Editor, Android, gráficos y escenas de build
 
 ### Escaneo
 
-`QRCodeScanner.Start()` pide permiso, elige preferentemente cámara trasera e inicia `WebCamTexture`. La pantalla guía al usuario para centrar el QR en un marco con esquinas animadas. Su tamaño se calcula a partir del área útil de la pantalla (aproximadamente dos tercios del ancho en vertical) y se reajusta si cambia la orientación o el área segura; la cámara sigue ocupando toda la pantalla. Las instrucciones y el estado aparecen en tarjetas claras con texto oscuro para mantener el contraste sobre la imagen. Los estados distinguen permiso, preparación, búsqueda, lectura y errores de cámara. Si la cámara falla, puede volver a intentar desde la pantalla; si el permiso está bloqueado, la instrucción indica activarlo en Ajustes. Al leer el QR confirma el éxito sin mostrar el identificador técnico. ZXing intenta leer códigos cada `0.25` segundos por defecto. La vista previa ajusta rotación, espejo y proporción en móvil.
+`QRCodeScanner.Start()` crea `StudentAppFlow` y espera a que el estudiante pulse «Escanear QR» antes de pedir permiso de cámara. La pantalla guía al usuario para centrar el QR en un marco con esquinas animadas. Su tamaño se calcula a partir del área útil de la pantalla (aproximadamente dos tercios del ancho en vertical) y se reajusta si cambia la orientación o el área segura; la cámara sigue ocupando toda la pantalla. Las instrucciones y el estado aparecen en tarjetas claras con texto oscuro para mantener el contraste sobre la imagen. Los estados distinguen permiso, preparación, búsqueda, lectura y errores de cámara. Si la cámara falla, puede volver a intentar desde la pantalla; si el permiso está bloqueado, la instrucción indica activarlo en Ajustes. Al leer el QR confirma el éxito sin mostrar el identificador técnico. ZXing intenta leer códigos cada `0.25` segundos por defecto. La vista previa ajusta rotación, espejo y proporción en móvil.
 
-Al leer un código nuevo, guarda `ScannedQRData.LastCode`, detiene el escaneo según configuración y carga `ARScene` tras `0.75` segundos por defecto. La cámara del escáner se detiene antes de la transición. `LastCode` es memoria estática: no es sesión de estudiante ni persistencia entre reinicios.
+Al leer un código nuevo, guarda `ScannedQRData.LastCode`, detiene el escaneo según configuración y carga `ARScene` tras `0.75` segundos por defecto. La cámara del escáner se detiene antes de la transición. `LastCode` es memoria estática para el QR; la sesión y el progreso del estudiante se gestionan aparte.
+
+### Acceso y biblioteca del estudiante
+
+En `QRScanScene`, `StudentAppFlow` presenta acceso alternativo por código personal o rostro. El docente crea/restablece el código desde el panel. La app obtiene un token Bearer de `/api/student/code-login/` o `/api/student/face-login/`. La opción «Recordar en este dispositivo» está desactivada por defecto para equipos compartidos; si se activa, guarda el token en `PlayerPrefs` y lo valida con `/api/student/me/` al volver a abrir. «Cambiar estudiante» revoca la sesión actual y limpia el dispositivo. El reconocimiento facial del backend es experimental; el código siempre queda como alternativa.
+
+`GET /api/student/library/` entrega «Mis libros» (asignados publicados), «Explorados» (publicados no asignados que abrió) y el último capítulo. `GET /api/student/books/<id>/` entrega capítulos con texto, audio y estado, sin modelo AR. Abrir un capítulo registra `/api/student/chapters/<id>/open/`; «Terminé» llama a `/complete/`. Así, «Retomar» abre la información del último capítulo incluso en otro teléfono. Desde esa lectura, «Ver en AR» abre el escáner: el modelo requiere leer el QR físico. Los borradores no se muestran.
+
+`studentApiBaseUrl` de `QRCodeScanner` configura la API de acceso y progreso; por defecto usa `https://bibliotecaar-backend.onrender.com/api`. Para desarrollo local en un teléfono, cambiarlo a la IP LAN del backend y mantener coherente `apiBaseUrl` de `ARSceneController`. Ambas rutas necesitan internet o red local accesible.
 
 ### Contenido
 
@@ -98,6 +108,8 @@ GET <apiBaseUrl>/unity/scenes/<qr_code>/
 Escapa el código para la URL. Convierte la respuesta en `SceneContent` y aplica título, texto, audio y prefab local disponible. Después intenta cargar GLB remoto y añadir la imagen QR a la biblioteca de seguimiento.
 
 La pantalla indica búsqueda, preparación, errores de red, código inexistente/no publicado y fallos del modelo, con reintento para operaciones recuperables. Si falla la API y hay contenido local con el mismo código, lo muestra avisando que es una copia de demostración. La lectura aparece en una tarjeta clara de alto contraste que se puede plegar con «Ocultar» y volver a abrir con «Leer» para dejar más espacio a la cámara. El texto se desplaza y la indicación de deslizamiento solo aparece cuando hay contenido fuera de la vista. El audio muestra botones con iconos para reproducir y pausar cuando existe un clip; no empieza sin acción del usuario. La interfaz usa el área segura y adapta la distribución vertical u horizontal.
+
+Al cargar un capítulo remoto con sesión estudiantil, AR registra `/api/student/qr/<qr_code>/open/`. El botón «Terminé» registra `/complete/` y confirma «Leído» al recibir respuesta. Las asignaciones organizan la biblioteca, pero un QR de otro libro publicado también funciona y queda en «Explorados». El endpoint Unity heredado sigue siendo público; no usar la asignación como control de acceso.
 
 Si falla la API o el JSON y `fallbackToLocalContent` está activo, busca contenido local. Ante código desconocido muestra «Contenido no encontrado». El fallback no es una caché persistente: solo conoce los datos/prefabs locales incluidos.
 
@@ -220,9 +232,10 @@ Abrir ARScene directamente sin escaneo previo no aporta un código válido. Veri
 
 ## 10. Límites y pendientes
 
-- No hay identificación facial, sesión de estudiante ni consulta de libros asignados en Unity. El backend tiene comparación LBP experimental, todavía sin integración móvil.
-- No existe autorización por estudiante. Conocer un QR publicado permite consultar su escena; las asignaciones del panel no restringen esa consulta.
-- No hay progreso lector persistido, evaluaciones, analítica educativa ni biblioteca descargada para uso offline completo.
+- La comparación facial LBP es experimental y no comprueba presencia real; validar con fotos y teléfonos reales antes de usarla como identificación confiable.
+- «Recordar en este dispositivo» persiste el token en `PlayerPrefs`, no en el almacén seguro del sistema. Reforzar ese almacenamiento antes de uso con datos personales reales.
+- El endpoint Unity heredado es público; conocer un QR publicado permite consultar su escena. Las asignaciones no restringen ese acceso.
+- El progreso lector se guarda en el backend; no hay evaluaciones, analítica educativa ni biblioteca descargada para uso offline completo.
 - La escala es global, sin editor de transformación por capítulo ni normalización automática de GLB.
 - Validar en dispositivo tracking, formatos de audio, materiales y ciclo de carga/liberación de recursos.
 - No hay pruebas automatizadas propias de estos flujos; `ZXingTest` solo escribe un log.
@@ -234,9 +247,9 @@ No se compiló ni ejecutó la aplicación Android al redactar esta documentació
 ## 11. Guía para el siguiente asistente
 
 1. Leer los tres README y revisar `git status` por repositorio; preservar cambios ajenos a la tarea.
-2. Leer en orden QRCodeScanner, ScannedQRData, ARSceneController y QRTrackedImagePlacer.
+2. Leer en orden StudentAppFlow, StudentAppSession, QRCodeScanner, ScannedQRData, ARSceneController y QRTrackedImagePlacer.
 3. Examinar también valores serializados en .unity/.asset; los inicializadores C# no describen solos el comportamiento.
 4. Preservar .meta y GUID. No actualizar editor/paquetes ni regenerar escenas sin necesidad.
 5. Coordinar cambios de contrato con serializers Django y UnitySceneApiResponse; no reinterpretar QR como URLs.
-6. No confundir fallback/demo o módulos faciales del backend con integración completa.
+6. No confundir la comparación facial experimental con presencia real ni el fallback local con progreso sincronizado.
 7. Informar pruebas de editor, Android y API por separado y actualizar esta guía al completar funcionalidades.

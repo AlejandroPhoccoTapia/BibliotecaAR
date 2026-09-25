@@ -27,6 +27,7 @@ public sealed class ARSceneExperienceUI : MonoBehaviour
     private Action playAudio;
     private Action pauseAudio;
     private Action retryContent;
+    private Action markCompleted;
 
     private RectTransform safeArea;
     private RectTransform narrationPanel;
@@ -40,6 +41,9 @@ public sealed class ARSceneExperienceUI : MonoBehaviour
     private Button playButton;
     private Button pauseButton;
     private Button expandButton;
+    private Button completeButton;
+    private TMP_Text completeButtonText;
+    private bool completionAvailable;
     private TMP_Text playButtonText;
     private TMP_Text pauseButtonText;
     private TMP_Text expandButtonText;
@@ -58,7 +62,8 @@ public sealed class ARSceneExperienceUI : MonoBehaviour
         AudioSource source,
         Action onPlayAudio,
         Action onPauseAudio,
-        Action onRetryContent)
+        Action onRetryContent,
+        Action onMarkCompleted)
     {
         titleText = title;
         narrationText = narration;
@@ -71,6 +76,7 @@ public sealed class ARSceneExperienceUI : MonoBehaviour
         playAudio = onPlayAudio;
         pauseAudio = onPauseAudio;
         retryContent = onRetryContent;
+        markCompleted = onMarkCompleted;
 
         GameObject safeAreaObject = GameObject.Find("SafeArea");
         safeArea = safeAreaObject != null ? safeAreaObject.GetComponent<RectTransform>() : null;
@@ -103,6 +109,7 @@ public sealed class ARSceneExperienceUI : MonoBehaviour
         BuildStatusBanner();
         BuildNarrationScrollView();
         BuildAudioControls();
+        BuildCompletionButton();
         BuildRetryButton();
         LayoutChrome();
         SetAudioAvailable(false);
@@ -167,6 +174,21 @@ public sealed class ARSceneExperienceUI : MonoBehaviour
         audioLoading = false;
         audioAvailable = available;
         RefreshAudioControls();
+    }
+
+    public void SetCompletionAvailable(bool available)
+    {
+        completionAvailable = available;
+        if (completeButton != null)
+            completeButton.gameObject.SetActive(available);
+    }
+
+    public void SetCompletionSaved(bool saved)
+    {
+        if (completeButtonText != null)
+            completeButtonText.text = saved ? "✓ Leído" : "Terminé";
+        if (completeButton != null)
+            completeButton.interactable = !saved;
     }
 
     public void UpdateAudioPlaybackState()
@@ -438,6 +460,23 @@ public sealed class ARSceneExperienceUI : MonoBehaviour
         RefreshAudioControls();
     }
 
+    private void BuildCompletionButton()
+    {
+        if (safeArea == null)
+            return;
+
+        completeButton = CreateButton("CompleteChapterButton", "Terminé", safeArea,
+            new Vector2(0.035f, 0.925f), new Vector2(0.60f, 0.99f), () => markCompleted?.Invoke());
+        completeButtonText = completeButton.GetComponentInChildren<TMP_Text>();
+        if (completeButtonText != null)
+        {
+            completeButtonText.fontSize = 30f;
+            completeButtonText.fontSizeMin = 23f;
+            completeButtonText.fontSizeMax = 32f;
+        }
+        completeButton.gameObject.SetActive(false);
+    }
+
     private void BuildRetryButton()
     {
         if (safeArea == null)
@@ -600,6 +639,10 @@ public sealed class ARSceneExperienceUI : MonoBehaviour
             SetStretch(rescanRect,
                 landscape ? new Vector2(0.035f, 0.88f) : new Vector2(0.64f, 0.925f),
                 landscape ? new Vector2(0.36f, 0.985f) : new Vector2(0.975f, 0.99f));
+        if (completeButton != null)
+            SetStretch(completeButton.transform as RectTransform,
+                landscape ? new Vector2(0.38f, 0.88f) : new Vector2(0.035f, 0.925f),
+                landscape ? new Vector2(0.51f, 0.985f) : new Vector2(0.60f, 0.99f));
 
         if (statusPanel != null)
             SetStretch(statusPanel,

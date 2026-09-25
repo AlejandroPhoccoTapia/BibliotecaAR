@@ -93,7 +93,7 @@ public class ARSceneController : MonoBehaviour
         BuildContentDictionary();
 
         experienceUI = gameObject.AddComponent<ARSceneExperienceUI>();
-        experienceUI.Initialize(titleText, narrationText, audioSource, PlayAudio, PauseAudio, RetryContentLoad);
+        experienceUI.Initialize(titleText, narrationText, audioSource, PlayAudio, PauseAudio, RetryContentLoad, MarkChapterCompleted);
         trackedImagePlacer = FindAnyObjectByType<QRTrackedImagePlacer>();
         if (trackedImagePlacer != null)
             trackedImagePlacer.TargetTrackingChanged += OnTargetTrackingChanged;
@@ -172,7 +172,38 @@ public class ARSceneController : MonoBehaviour
     public void BackToScanner()
     {
         Debug.Log("ARSceneController: volviendo a escaner QR");
+        StudentAppSession.OpenScannerOnLoad = true;
         SceneManager.LoadScene(qrScanSceneName);
+    }
+
+    public void MarkChapterCompleted()
+    {
+        if (StudentAppSession.HasToken && !string.IsNullOrWhiteSpace(ScannedQRData.LastCode))
+            StartCoroutine(SaveQrProgress(ScannedQRData.LastCode, "complete"));
+    }
+
+    private IEnumerator SaveQrProgress(string qrCode, string action)
+    {
+        string path = "student/qr/" + UnityWebRequest.EscapeURL(qrCode) + "/" + action + "/";
+        using (UnityWebRequest request = StudentApi.Post(path))
+        {
+            yield return request.SendWebRequest();
+            if (request.result == UnityWebRequest.Result.Success)
+            {
+                if (action == "complete")
+                    experienceUI?.SetCompletionSaved(true);
+                else
+                {
+                    StudentProgressData progress = JsonUtility.FromJson<StudentProgressData>(request.downloadHandler.text);
+                    experienceUI?.SetCompletionSaved(progress != null && progress.is_completed);
+                }
+            }
+            else if (action == "complete")
+            {
+                experienceUI?.SetStatus("No se pudo guardar el capítulo. Inténtalo de nuevo.",
+                    ARSceneExperienceUI.MessageTone.Warning, false);
+            }
+        }
     }
 
     private void ApplyContent(SceneContent content)
@@ -314,6 +345,8 @@ public class ARSceneController : MonoBehaviour
             yield break;
 
         isLoadingContent = true;
+        experienceUI?.SetCompletionAvailable(false);
+        experienceUI?.SetCompletionSaved(false);
         trackingImageSetupFailed = false;
         modelSetupFailed = false;
         experienceUI?.SetStatus("Buscando el capítulo…", ARSceneExperienceUI.MessageTone.Info, false);
@@ -393,6 +426,9 @@ public class ARSceneController : MonoBehaviour
 
             SceneContent apiContent = CreateContentFromApi(apiScene);
             ApplyContent(apiContent);
+            experienceUI?.SetCompletionAvailable(StudentAppSession.HasToken);
+            if (StudentAppSession.HasToken)
+                StartCoroutine(SaveQrProgress(apiScene.qr_code, "open"));
 
             if (loadGlbModelFromApi)
                 yield return LoadGltfModelFromUrl(apiContent);

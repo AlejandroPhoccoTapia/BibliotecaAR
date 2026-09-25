@@ -669,6 +669,7 @@ MonoBehaviour:
   statusText: {fileID: 955960573}
   instructionText: {fileID: 913018616}
   scanFrame: {fileID: 1507613746}
+  studentApiBaseUrl: https://bibliotecaar-backend.onrender.com/api
   scanInterval: 0.25
   cameraStartupTimeoutSeconds: 8
   stopAfterFirstScan: 1
