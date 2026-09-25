@@ -24,6 +24,7 @@ public class ARSceneController : MonoBehaviour
         public AudioClip audioClip;
         public string audioUrl;
         public string modelUrl;
+        public string tapAnimationName;
     }
 
     [Serializable]
@@ -45,6 +46,7 @@ public class ARSceneController : MonoBehaviour
         public string cover_url;
         public string audio_url;
         public string glb_model_url;
+        public string tap_animation_name;
         public string qr_image_url;
         public float ar_marker_width_cm;
         public float ar_model_size_cm;
@@ -637,6 +639,7 @@ public class ARSceneController : MonoBehaviour
 
     private void ReplacePresentation(SceneContent content, GameObject root)
     {
+        root.GetComponent<ARStoryInteraction>()?.Configure(content.tapAnimationName);
         GameObject previous = activePresentationRoot;
         activePresentationRoot = root;
         ApplyPrefabToPlacers(content, root, true);
@@ -749,7 +752,8 @@ public class ARSceneController : MonoBehaviour
             prefabKey = apiScene.prefab_key,
             prefab = prefab,
             audioUrl = apiScene.audio_url,
-            modelUrl = apiScene.glb_model_url
+            modelUrl = apiScene.glb_model_url,
+            tapAnimationName = apiScene.tap_animation_name
         };
     }
 

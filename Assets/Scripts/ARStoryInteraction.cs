@@ -12,8 +12,15 @@ public sealed class ARStoryInteraction : MonoBehaviour
     private Animation modelAnimation;
     private string idleClip;
     private string walkClip;
+    private string tapAnimationName;
+    private string tapClip;
     private Coroutine walkRoutine;
     private bool outward;
+
+    public void Configure(string animationName)
+    {
+        tapAnimationName = animationName?.Trim();
+    }
 
     private void Start()
     {
@@ -24,8 +31,21 @@ public sealed class ARStoryInteraction : MonoBehaviour
         modelAnimation = visual.GetComponentInChildren<Animation>(true);
         if (modelAnimation == null)
             return;
+        modelAnimation.playAutomatically = false;
+        modelAnimation.Stop();
         idleClip = FindClip("Idle", "Quieto", "Stand");
         walkClip = FindClip("Walk", "Caminar", "Walking");
+        if (!string.IsNullOrEmpty(tapAnimationName))
+        {
+            foreach (AnimationState state in modelAnimation)
+                if (string.Equals(state.name, tapAnimationName, StringComparison.Ordinal))
+                {
+                    tapClip = state.name;
+                    break;
+                }
+            if (string.IsNullOrEmpty(tapClip))
+                Debug.LogWarning("ARStoryInteraction: el GLB no contiene la animación configurada: " + tapAnimationName);
+        }
         if (!string.IsNullOrEmpty(idleClip))
             modelAnimation.Play(idleClip);
     }
@@ -49,7 +69,7 @@ public sealed class ARStoryInteraction : MonoBehaviour
             {
                 if (walkRoutine != null)
                     StopCoroutine(walkRoutine);
-                walkRoutine = StartCoroutine(Walk());
+                walkRoutine = StartCoroutine(PlayTapAnimation());
                 break;
             }
         }
@@ -68,10 +88,22 @@ public sealed class ARStoryInteraction : MonoBehaviour
         return false;
     }
 
-    private IEnumerator Walk()
+    private IEnumerator PlayTapAnimation()
     {
         if (visual == null)
             yield break;
+        if (modelAnimation != null && !string.IsNullOrEmpty(tapClip))
+        {
+            modelAnimation.Stop();
+            modelAnimation.Play(tapClip);
+            yield return new WaitForSeconds(Mathf.Max(0.1f, modelAnimation[tapClip].length));
+            modelAnimation.Stop();
+            if (!string.IsNullOrEmpty(idleClip))
+                modelAnimation.Play(idleClip);
+            walkRoutine = null;
+            yield break;
+        }
+
         if (modelAnimation != null && !string.IsNullOrEmpty(walkClip))
             modelAnimation.Play(walkClip);
 
