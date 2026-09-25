@@ -91,6 +91,11 @@ public class ARSceneController : MonoBehaviour
     private ChapterArPlacement currentPlacement;
     private ChapterArPlacement savedPlacement;
     private ARPlacementEditorUI teacherEditor;
+    private AndroidNarrationVoice narrationVoice;
+    private string speechText;
+    private bool useSpeech;
+    private float nextVoicePollTime;
+    private int contentVersion;
     private GameObject activePresentationRoot;
     private float activePresentationMaxDimension = 1f;
     private bool isSavingPlacement;
@@ -106,7 +111,7 @@ public class ARSceneController : MonoBehaviour
             teacherEditor = gameObject.AddComponent<ARPlacementEditorUI>();
             teacherEditor.Initialize(titleText != null ? titleText.font : null,
                 AdjustTeacherPlacement, SaveTeacherPlacement, ResetTeacherPlacement,
-                experienceUI.SetTeacherAdjustmentOpen);
+                HandleTeacherAdjustmentOpen);
             experienceUI.SetReadingExpanded(false);
         }
         trackedImagePlacer = FindAnyObjectByType<QRTrackedImagePlacer>();
@@ -137,10 +142,30 @@ public class ARSceneController : MonoBehaviour
 
     private void OnDestroy()
     {
+        narrationVoice?.Dispose();
         if (trackedImagePlacer != null)
             trackedImagePlacer.TargetTrackingChanged -= OnTargetTrackingChanged;
         if (activePresentationRoot != null)
             Destroy(activePresentationRoot);
+    }
+
+    private void Update()
+    {
+        if (!useSpeech || narrationVoice == null || Time.unscaledTime < nextVoicePollTime)
+            return;
+        nextVoicePollTime = Time.unscaledTime + 0.25f;
+        RefreshVoiceState();
+    }
+
+    private void OnApplicationPause(bool paused)
+    {
+        if (!paused)
+            return;
+        if (audioSource != null && audioSource.isPlaying)
+            audioSource.Pause();
+        narrationVoice?.Pause();
+        experienceUI?.UpdateAudioPlaybackState();
+        RefreshVoiceState();
     }
 
     public void RetryContentLoad()
@@ -156,34 +181,61 @@ public class ARSceneController : MonoBehaviour
 
     public void PlayAudio()
     {
-        if (audioSource == null)
+        if (audioSource != null && audioSource.clip != null)
         {
-            Debug.LogWarning("ARSceneController: no hay AudioSource asignado");
+            if (audioSource.time > 0f && audioSource.time < audioSource.clip.length)
+                audioSource.UnPause();
+            else
+                audioSource.Play();
+            experienceUI?.UpdateAudioPlaybackState();
             return;
         }
 
-        if (audioSource.clip == null)
+        if (useSpeech && narrationVoice != null)
         {
-            Debug.LogWarning("ARSceneController: no hay audio asignado para este QR");
+            narrationVoice.Poll();
+            narrationVoice.Play(speechText);
+            RefreshVoiceState();
             return;
         }
 
-        if (audioSource.time > 0f && audioSource.time < audioSource.clip.length)
-            audioSource.UnPause();
-        else
-            audioSource.Play();
-        experienceUI?.UpdateAudioPlaybackState();
-        Debug.Log("ARSceneController: reproduciendo audio");
+        Debug.LogWarning("ARSceneController: no hay narración disponible para este QR");
     }
 
     public void PauseAudio()
     {
-        if (audioSource == null)
-            return;
-
-        audioSource.Pause();
+        if (audioSource != null && audioSource.clip != null)
+            audioSource.Pause();
+        else
+            narrationVoice?.Pause();
         experienceUI?.UpdateAudioPlaybackState();
-        Debug.Log("ARSceneController: audio pausado");
+        RefreshVoiceState();
+    }
+
+    private void HandleTeacherAdjustmentOpen(bool open)
+    {
+        experienceUI?.SetTeacherAdjustmentOpen(open);
+        if (open)
+            PauseAudio();
+    }
+
+    private void ActivateSpeech(string text)
+    {
+        speechText = text?.Trim();
+        useSpeech = !string.IsNullOrWhiteSpace(speechText);
+        if (useSpeech && narrationVoice == null)
+            narrationVoice = new AndroidNarrationVoice();
+        RefreshVoiceState();
+    }
+
+    private void RefreshVoiceState()
+    {
+        if (useSpeech)
+            narrationVoice?.Poll();
+        experienceUI?.SetVoiceState(useSpeech, narrationVoice != null && narrationVoice.IsReady,
+            narrationVoice != null && narrationVoice.IsSpeaking,
+            narrationVoice != null && narrationVoice.IsPaused,
+            narrationVoice != null ? narrationVoice.Error : string.Empty);
     }
 
     public void BackToScanner()
@@ -225,6 +277,11 @@ public class ARSceneController : MonoBehaviour
 
     private void ApplyContent(SceneContent content)
     {
+        contentVersion++;
+        narrationVoice?.Stop();
+        speechText = null;
+        useSpeech = false;
+        experienceUI?.SetVoiceState(false, false, false, false, string.Empty);
         selectedContent = content;
 
         Debug.Log("ARSceneController: escena seleccionada: " + content.title);
@@ -245,16 +302,19 @@ public class ARSceneController : MonoBehaviour
         {
             audioSource.Stop();
             audioSource.clip = content.audioClip;
+        }
 
-            if (content.audioClip != null)
-                experienceUI?.SetAudioAvailable(true);
-            else if (!string.IsNullOrWhiteSpace(content.audioUrl))
-            {
-                experienceUI?.SetAudioLoading();
-                StartCoroutine(LoadAudioFromUrl(content.audioUrl));
-            }
-            else
-                experienceUI?.SetAudioAvailable(false);
+        if (audioSource != null && content.audioClip != null)
+            experienceUI?.SetAudioAvailable(true);
+        else if (audioSource != null && !string.IsNullOrWhiteSpace(content.audioUrl))
+        {
+            experienceUI?.SetAudioLoading();
+            StartCoroutine(LoadAudioFromUrl(content.audioUrl, contentVersion));
+        }
+        else
+        {
+            experienceUI?.SetAudioAvailable(false);
+            ActivateSpeech(content.narration);
         }
 
         experienceUI?.SetStatus(
@@ -738,7 +798,7 @@ public class ARSceneController : MonoBehaviour
         Debug.Log("ARSceneController: GLB runtime listo para QR: " + content.qrCode);
     }
 
-    private IEnumerator LoadAudioFromUrl(string audioUrl)
+    private IEnumerator LoadAudioFromUrl(string audioUrl, int version)
     {
         Debug.Log("ARSceneController: descargando audio: " + audioUrl);
 
@@ -747,10 +807,14 @@ public class ARSceneController : MonoBehaviour
             request.timeout = Mathf.Max(1, Mathf.RoundToInt(apiTimeoutSeconds));
             yield return request.SendWebRequest();
 
+            if (version != contentVersion)
+                yield break;
+
             if (request.result != UnityWebRequest.Result.Success)
             {
                 Debug.LogWarning("ARSceneController: no se pudo descargar audio: " + request.error);
                 experienceUI?.SetAudioAvailable(false);
+                ActivateSpeech(selectedContent?.narration);
                 yield break;
             }
 
@@ -759,6 +823,7 @@ public class ARSceneController : MonoBehaviour
             {
                 Debug.LogWarning("ARSceneController: audio descargado invalido");
                 experienceUI?.SetAudioAvailable(false);
+                ActivateSpeech(selectedContent?.narration);
                 yield break;
             }
 

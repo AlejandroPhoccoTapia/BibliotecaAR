@@ -1,0 +1,10 @@
+apply plugin: 'com.android.library'
+
+android {
+    namespace 'com.bibliotecaar.ttsvisibility'
+    compileSdkVersion 35
+
+    defaultConfig {
+        minSdkVersion 29
+    }
+}

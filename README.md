@@ -65,6 +65,7 @@ Assets/
     StudentAppSession.cs    Sesión, modelos JSON y peticiones a la API estudiantil
     ScannedQRData.cs        LastCode estático entre escenas
     ARSceneController.cs    API, selección, GLB, audio y QR dinámico
+    AndroidNarrationVoice.cs Puente a la voz nativa de Android
     ARSceneExperienceUI.cs Estados AR, texto desplazable y controles accesibles
     QRTrackedImagePlacer.cs Colocación/visibilidad sobre imagen
     ARTrackedVisibility.cs  Transición suave al perder/recuperar seguimiento
@@ -117,7 +118,7 @@ GET <apiBaseUrl>/unity/scenes/<qr_code>/
 
 Escapa el código para la URL. Convierte la respuesta en `SceneContent` y aplica título, texto, audio y prefab local disponible. Después intenta cargar GLB remoto y añadir la imagen QR a la biblioteca de seguimiento.
 
-La pantalla indica búsqueda, preparación, errores de red, código inexistente/no publicado y fallos del modelo, con reintento para operaciones recuperables. Si falla la API y hay contenido local con el mismo código, lo muestra avisando que es una copia de demostración. La lectura aparece en una tarjeta clara de alto contraste que se puede plegar con «Ocultar» y volver a abrir con «Leer» para dejar más espacio a la cámara. El texto se desplaza y la indicación de deslizamiento solo aparece cuando hay contenido fuera de la vista. El audio muestra botones con iconos para reproducir y pausar cuando existe un clip; no empieza sin acción del usuario. La interfaz usa el área segura y adapta la distribución vertical u horizontal.
+La pantalla indica búsqueda, preparación, errores de red, código inexistente/no publicado y fallos del modelo, con reintento para operaciones recuperables. Si falla la API y hay contenido local con el mismo código, lo muestra avisando que es una copia de demostración. La lectura aparece en una tarjeta clara de alto contraste que se puede plegar con «Ocultar» y volver a abrir con «Leer» para dejar más espacio a la cámara. El texto se desplaza y la indicación de deslizamiento solo aparece cuando hay contenido fuera de la vista. Los botones permiten escuchar y pausar un clip subido o, si no existe, una voz automática que lee la narración; nada empieza sin tocar «Escuchar». La interfaz usa el área segura y adapta la distribución vertical u horizontal.
 
 Al cargar un capítulo remoto con sesión estudiantil, AR registra `/api/student/qr/<qr_code>/open/`. El botón «Terminé» registra `/complete/` y confirma «Leído» al recibir respuesta. Las asignaciones organizan la biblioteca, pero un QR de otro libro publicado también funciona y queda en «Explorados». El endpoint Unity heredado sigue siendo público; no usar la asignación como control de acceso.
 
@@ -139,7 +140,7 @@ Un toque sobre el modelo activa la interacción: con un clip GLB llamado `Walk`,
 
 ### Audio y navegación
 
-El controlador escribe título/narración en TextMesh Pro. Reproduce el clip local o descarga audio mediante `UnityWebRequestMultimedia.GetAudioClip`. Expone `PlayAudio()`, `PauseAudio()` y `BackToScanner()` para los controles. Este último carga `QRScanScene`.
+El controlador escribe título/narración en Text Mesh Pro. Si hay audio grabado, reproduce el clip local o lo descarga mediante `UnityWebRequestMultimedia.GetAudioClip`. Si no hay audio o falla su descarga, `AndroidNarrationVoice` usa el servicio TextToSpeech del teléfono para leer el texto en español. El complemento Android `TtsVisibility.androidlib` declara la visibilidad del servicio de voz y selecciona una voz española instalada de alta calidad cuando está disponible, con ritmo ligeramente pausado; puede usar una voz de red si mejora a la voz local y recurre a la local si falla. La calidad final depende de las voces instaladas en el dispositivo. Los controles permiten pausar y continuar desde la frase en curso (esa frase se repite); al cambiar de capítulo, salir de la escena o poner la app en segundo plano, la voz se detiene o pausa. Si falta una voz en español, la interfaz indica que debe activarse en los ajustes del teléfono. `BackToScanner()` carga `QRScanScene`.
 
 ## 5. Estado de las escenas guardadas
 

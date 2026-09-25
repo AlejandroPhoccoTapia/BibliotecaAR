@@ -51,6 +51,11 @@ public sealed class ARSceneExperienceUI : MonoBehaviour
     private Image pauseIcon;
     private bool audioAvailable;
     private bool audioLoading;
+    private bool voiceAvailable;
+    private bool voiceLoading;
+    private bool voicePlaying;
+    private bool voicePaused;
+    private string voiceError = string.Empty;
     private bool isExpanded = true;
     private Rect lastSafeArea;
     private Vector2 lastScreenSize;
@@ -173,6 +178,16 @@ public sealed class ARSceneExperienceUI : MonoBehaviour
     {
         audioLoading = false;
         audioAvailable = available;
+        RefreshAudioControls();
+    }
+
+    public void SetVoiceState(bool enabled, bool ready, bool playing, bool paused, string error)
+    {
+        voiceAvailable = enabled && ready;
+        voiceLoading = enabled && !ready && string.IsNullOrEmpty(error);
+        voicePlaying = enabled && playing;
+        voicePaused = enabled && paused;
+        voiceError = enabled ? error ?? string.Empty : string.Empty;
         RefreshAudioControls();
     }
 
@@ -573,33 +588,40 @@ public sealed class ARSceneExperienceUI : MonoBehaviour
     private void RefreshAudioControls()
     {
         bool hasClip = audioAvailable && audioSource != null && audioSource.clip != null;
-        bool playing = hasClip && audioSource.isPlaying;
-        bool showAudio = audioLoading || hasClip;
-        lastAudioPlaying = playing;
+        bool playing = hasClip ? audioSource.isPlaying : voicePlaying;
+        bool showVoice = !hasClip && (voiceAvailable || voiceLoading || !string.IsNullOrEmpty(voiceError));
+        bool showAudio = audioLoading || hasClip || showVoice;
+        lastAudioPlaying = hasClip && audioSource.isPlaying;
 
         if (playButton != null)
         {
             playButton.gameObject.SetActive(isExpanded && showAudio);
-            playButton.interactable = hasClip && !playing;
+            playButton.interactable = (hasClip || voiceAvailable) && !playing;
             SetStretch(playButton.transform as RectTransform,
                 new Vector2(0.055f, 0.06f),
-                hasClip ? new Vector2(0.485f, 0.235f) : new Vector2(0.945f, 0.235f));
+                hasClip || voiceAvailable ? new Vector2(0.485f, 0.235f) : new Vector2(0.945f, 0.235f));
             if (playButtonText != null)
             {
                 bool paused = hasClip && !playing && audioSource.time > 0f && audioSource.time < audioSource.clip.length;
-                playButtonText.text = audioLoading ? "Preparando audio…" : hasClip ? paused ? "Continuar audio" : "Escuchar audio" : "Audio no disponible";
-                playButtonText.color = hasClip ? Color.white : InkColor;
+                playButtonText.text = audioLoading ? "Preparando audio…"
+                    : hasClip ? paused ? "Continuar audio" : "Escuchar audio"
+                    : voiceLoading ? "Preparando voz…"
+                    : !string.IsNullOrEmpty(voiceError) ? voiceError
+                    : voicePaused ? "Continuar narración" : "Escuchar narración";
+                playButtonText.color = hasClip || voiceAvailable ? Color.white : InkColor;
             }
         }
 
         if (playIcon != null)
-            playIcon.gameObject.SetActive(hasClip);
+            playIcon.gameObject.SetActive(hasClip || voiceAvailable);
 
         if (pauseButton != null)
         {
-            pauseButton.gameObject.SetActive(isExpanded && hasClip);
+            pauseButton.gameObject.SetActive(isExpanded && (hasClip || voiceAvailable));
             pauseButton.interactable = playing;
         }
+        if (pauseButtonText != null)
+            pauseButtonText.text = hasClip ? "Pausar audio" : "Pausar voz";
         if (pauseIcon != null)
             pauseIcon.color = playing ? AccentColor : MutedColor;
 
