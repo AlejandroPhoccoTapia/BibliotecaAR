@@ -60,7 +60,19 @@ public sealed class ARStoryInteraction : MonoBehaviour
         else
             return;
 
-        if (PointerHitsButton(position) || Camera.main == null)
+        if (PointerHitsUi(position))
+            return;
+
+        // A chapter-selected clip plays from any free part of the camera view.
+        if (!string.IsNullOrEmpty(tapClip))
+        {
+            if (walkRoutine != null)
+                StopCoroutine(walkRoutine);
+            walkRoutine = StartCoroutine(PlayTapAnimation());
+            return;
+        }
+
+        if (Camera.main == null)
             return;
         Ray ray = Camera.main.ScreenPointToRay(position);
         foreach (RaycastHit hit in Physics.RaycastAll(ray, 20f))
@@ -75,7 +87,7 @@ public sealed class ARStoryInteraction : MonoBehaviour
         }
     }
 
-    private bool PointerHitsButton(Vector2 position)
+    private bool PointerHitsUi(Vector2 position)
     {
         if (EventSystem.current == null)
             return false;
@@ -83,7 +95,7 @@ public sealed class ARStoryInteraction : MonoBehaviour
         List<RaycastResult> hits = new List<RaycastResult>();
         EventSystem.current.RaycastAll(pointer, hits);
         foreach (RaycastResult hit in hits)
-            if (hit.gameObject.GetComponentInParent<UnityEngine.UI.Button>() != null)
+            if (hit.module is UnityEngine.UI.GraphicRaycaster)
                 return true;
         return false;
     }

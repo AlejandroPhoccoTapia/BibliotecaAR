@@ -90,6 +90,10 @@ public sealed class ARSceneExperienceUI : MonoBehaviour
             Canvas canvas = FindFirstObjectByType<Canvas>();
             safeArea = canvas != null ? canvas.transform as RectTransform : null;
         }
+        // The scene's transparent SafeArea image covers the whole screen; it must not
+        // consume taps intended to play a chapter animation over the camera view.
+        if (safeArea != null && safeArea.GetComponent<Image>() is Image safeAreaImage)
+            safeAreaImage.raycastTarget = false;
 
         CanvasScaler scaler = FindFirstObjectByType<CanvasScaler>();
         if (scaler != null)
@@ -339,7 +343,7 @@ public sealed class ARSceneExperienceUI : MonoBehaviour
         if (background != null)
         {
             StyleRounded(background, PanelColor);
-            background.raycastTarget = false;
+            background.raycastTarget = true;
         }
 
         if (safeArea != null && panelShadow == null)
@@ -392,7 +396,9 @@ public sealed class ARSceneExperienceUI : MonoBehaviour
 
         statusPanel = CreatePanel("ARStatusPanel", safeArea);
         SetStretch(statusPanel, new Vector2(0.035f, 0.82f), new Vector2(0.965f, 0.91f));
-        statusPanel.GetComponent<Image>().color = PanelColor;
+        Image statusBackground = statusPanel.GetComponent<Image>();
+        statusBackground.color = PanelColor;
+        statusBackground.raycastTarget = true;
         statusText = CreateText("ARStatusText", statusPanel, "Preparando la realidad aumentada…", 37f);
         SetStretch(statusText.rectTransform, Vector2.zero, Vector2.one);
         statusText.margin = new Vector4(36f, 14f, 36f, 14f);
