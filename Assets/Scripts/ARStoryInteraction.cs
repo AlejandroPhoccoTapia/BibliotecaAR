@@ -52,6 +52,9 @@ public sealed class ARStoryInteraction : MonoBehaviour
 
     private void Update()
     {
+        if (ARPlacementEditorUI.IsEditing)
+            return;
+
         Vector2 position;
         if (Touchscreen.current != null && Touchscreen.current.primaryTouch.press.wasPressedThisFrame)
             position = Touchscreen.current.primaryTouch.position.ReadValue();

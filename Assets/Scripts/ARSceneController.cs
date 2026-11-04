@@ -93,6 +93,7 @@ public class ARSceneController : MonoBehaviour
     private ChapterArPlacement currentPlacement;
     private ChapterArPlacement savedPlacement;
     private ARPlacementEditorUI teacherEditor;
+    private ARPlacementGestureController teacherGestures;
     private AndroidNarrationVoice narrationVoice;
     private string speechText;
     private bool useSpeech;
@@ -119,6 +120,12 @@ public class ARSceneController : MonoBehaviour
         trackedImagePlacer = FindAnyObjectByType<QRTrackedImagePlacer>();
         if (trackedImagePlacer != null)
             trackedImagePlacer.TargetTrackingChanged += OnTargetTrackingChanged;
+        if (teacherEditor != null)
+        {
+            teacherGestures = gameObject.AddComponent<ARPlacementGestureController>();
+            teacherGestures.Initialize(trackedImagePlacer, () => currentPlacement,
+                SetTeacherPlacement, teacherEditor.SetMessage);
+        }
 
         scannedQrCode = ScannedQRData.LastCode;
         if (string.IsNullOrWhiteSpace(scannedQrCode))
@@ -689,6 +696,13 @@ public class ARSceneController : MonoBehaviour
                 currentPlacement.ar_yaw_degrees = Mathf.Clamp(currentPlacement.ar_yaw_degrees + step, -180f, 180f);
                 break;
         }
+        ApplyCurrentPlacement();
+        teacherEditor?.SetPlacement(currentPlacement);
+    }
+
+    private void SetTeacherPlacement(ChapterArPlacement placement)
+    {
+        currentPlacement = placement;
         ApplyCurrentPlacement();
         teacherEditor?.SetPlacement(currentPlacement);
     }

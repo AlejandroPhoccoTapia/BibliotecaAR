@@ -64,6 +64,25 @@ public class QRTrackedImagePlacer : MonoBehaviour
         Debug.Log("QRTrackedImagePlacer: contenido AR reemplazado por " + (objectToPlace != null ? objectToPlace.name : "null"));
     }
 
+    public bool TryGetTrackedImageTransform(out Transform imageTransform)
+    {
+        if (trackedImageManager != null)
+        {
+            string requiredCode = GetRequiredCode();
+            foreach (ARTrackedImage image in trackedImageManager.trackables)
+            {
+                if (image.trackingState == TrackingState.Tracking
+                    && (string.IsNullOrWhiteSpace(requiredCode) || image.referenceImage.name == requiredCode))
+                {
+                    imageTransform = image.transform;
+                    return true;
+                }
+            }
+        }
+        imageTransform = null;
+        return false;
+    }
+
     public void UpdatePlacement(Vector3 offset, Vector3 eulerAngles, float uniformScale)
     {
         localOffset = offset;

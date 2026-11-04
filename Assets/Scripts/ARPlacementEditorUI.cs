@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
@@ -8,26 +9,22 @@ public sealed class ARPlacementEditorUI : MonoBehaviour
     private static readonly Color Ink = new Color(0.08f, 0.15f, 0.20f);
     private static readonly Color Teal = new Color(0.02f, 0.43f, 0.49f);
     private static readonly Color Slate = new Color(0.37f, 0.48f, 0.52f);
-    private static readonly string[] FieldLabels = {
-        "Marcador", "Tamaño del modelo", "Derecha / izquierda", "Altura", "Sobre la página", "Giro"
-    };
-    private static readonly float[] FieldSteps = { 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 5f };
-
+    private readonly float[] values = new float[6];
     private RectTransform panel;
     private Button toggleButton;
     private TMP_Text toggleLabel;
-    private TMP_Text fieldLabel;
-    private TMP_Text valueLabel;
+    private TMP_Text valuesLabel;
     private TMP_Text feedback;
-    private readonly float[] values = new float[6];
-    private int selectedField = 1;
-    private bool open;
-    private bool? lastLandscape;
+    private TMP_InputField markerInput;
     private Action<int, float> adjust;
     private Action save;
     private Action reset;
     private Action<bool> openChanged;
     private TMP_FontAsset font;
+    private bool open;
+    private bool? lastLandscape;
+
+    public static bool IsEditing { get; private set; }
 
     public void Initialize(TMP_FontAsset uiFont, Action<int, float> onAdjust, Action onSave,
         Action onReset, Action<bool> onOpenChanged)
@@ -37,40 +34,39 @@ public sealed class ARPlacementEditorUI : MonoBehaviour
         save = onSave;
         reset = onReset;
         openChanged = onOpenChanged;
-
         GameObject safeObject = GameObject.Find("SafeArea");
         Transform parent = safeObject != null ? safeObject.transform : FindFirstObjectByType<Canvas>().transform;
+
         toggleButton = MakeButton("TeacherPlacementToggle", parent, "Ajustar modelo",
-            new Vector2(0.77f, 0.745f), new Vector2(0.97f, 0.81f), Teal, Toggle);
+            new Vector2(0.70f, 0.745f), new Vector2(0.97f, 0.81f), Teal, Toggle);
         toggleLabel = toggleButton.GetComponentInChildren<TMP_Text>();
-
-        panel = MakePanel("TeacherPlacementPanel", parent, new Vector2(0.035f, 0.035f),
-            new Vector2(0.965f, 0.205f));
-        MakeButton("PreviousPlacementField", panel, "‹", new Vector2(0.04f, 0.75f),
-            new Vector2(0.16f, 0.96f), Slate, () => SelectField(-1));
-        fieldLabel = MakeText("PlacementField", panel, string.Empty, 31f,
-            new Vector2(0.18f, 0.75f), new Vector2(0.82f, 0.96f), TextAlignmentOptions.Center);
-        fieldLabel.fontStyle = FontStyles.Bold;
-        MakeButton("NextPlacementField", panel, "›", new Vector2(0.84f, 0.75f),
-            new Vector2(0.96f, 0.96f), Slate, () => SelectField(1));
-
-        MakeButton("DecreasePlacement", panel, "−", new Vector2(0.04f, 0.44f),
-            new Vector2(0.24f, 0.72f), Teal, () => adjust?.Invoke(selectedField, -FieldSteps[selectedField]));
-        valueLabel = MakeText("PlacementValue", panel, string.Empty, 34f,
-            new Vector2(0.26f, 0.44f), new Vector2(0.74f, 0.72f), TextAlignmentOptions.Center);
-        valueLabel.fontStyle = FontStyles.Bold;
-        MakeButton("IncreasePlacement", panel, "+", new Vector2(0.76f, 0.44f),
-            new Vector2(0.96f, 0.72f), Teal, () => adjust?.Invoke(selectedField, FieldSteps[selectedField]));
-
-        MakeButton("SavePlacement", panel, "Guardar", new Vector2(0.04f, 0.20f),
-            new Vector2(0.49f, 0.41f), Teal, () => save?.Invoke());
-        MakeButton("ResetPlacement", panel, "Deshacer", new Vector2(0.51f, 0.20f),
-            new Vector2(0.96f, 0.41f), Slate, () => reset?.Invoke());
-        feedback = MakeText("PlacementFeedback", panel, string.Empty, 23f,
-            new Vector2(0.04f, 0.02f), new Vector2(0.96f, 0.18f), TextAlignmentOptions.Center);
-        RefreshSelectedField();
+        panel = MakePanel("TeacherPlacementPanel", parent,
+            new Vector2(0.035f, 0.035f), new Vector2(0.965f, 0.255f));
+        TMP_Text instructions = MakeText("PlacementInstructions", panel,
+            "Arrastra: mover · pellizca: tamaño\nGira dos dedos: rotar · desliza ambos: altura",
+            27f, new Vector2(0.05f, 0.76f), new Vector2(0.95f, 0.97f), TextAlignmentOptions.Center);
+        instructions.fontStyle = FontStyles.Bold;
+        valuesLabel = MakeText("PlacementValues", panel, string.Empty, 24f,
+            new Vector2(0.05f, 0.54f), new Vector2(0.95f, 0.75f), TextAlignmentOptions.Center);
+        MakeText("MarkerWidthLabel", panel, "Ancho del QR impreso", 25f,
+            new Vector2(0.05f, 0.37f), new Vector2(0.54f, 0.53f), TextAlignmentOptions.Left);
+        markerInput = MakeMarkerInput(panel);
+        MakeText("MarkerWidthUnit", panel, "cm", 25f,
+            new Vector2(0.84f, 0.37f), new Vector2(0.95f, 0.53f), TextAlignmentOptions.Left);
+        MakeButton("SavePlacement", panel, "Guardar", new Vector2(0.05f, 0.17f),
+            new Vector2(0.49f, 0.36f), Teal, Save);
+        MakeButton("ResetPlacement", panel, "Deshacer", new Vector2(0.51f, 0.17f),
+            new Vector2(0.95f, 0.36f), Slate, Reset);
+        feedback = MakeText("PlacementFeedback", panel,
+            "Ajusta sobre el QR y guarda cuando quede bien.", 22f,
+            new Vector2(0.05f, 0.01f), new Vector2(0.95f, 0.16f), TextAlignmentOptions.Center);
         Layout();
         panel.gameObject.SetActive(false);
+    }
+
+    private void OnDisable()
+    {
+        IsEditing = false;
     }
 
     private void Update()
@@ -83,13 +79,18 @@ public sealed class ARPlacementEditorUI : MonoBehaviour
     {
         if (placement == null)
             return;
-        float[] numbers = {
-            placement.ar_marker_width_cm, placement.ar_model_size_cm, placement.ar_offset_x_cm,
-            placement.ar_offset_y_cm, placement.ar_offset_z_cm, placement.ar_yaw_degrees,
-        };
-        for (int i = 0; i < values.Length; i++)
-            values[i] = numbers[i];
-        RefreshSelectedField();
+        values[0] = placement.ar_marker_width_cm;
+        values[1] = placement.ar_model_size_cm;
+        values[2] = placement.ar_offset_x_cm;
+        values[3] = placement.ar_offset_y_cm;
+        values[4] = placement.ar_offset_z_cm;
+        values[5] = placement.ar_yaw_degrees;
+        if (valuesLabel != null)
+            valuesLabel.text = string.Format(CultureInfo.CurrentCulture,
+                "Tamaño {0:0.#} cm · Altura {1:0.#} cm · Giro {2:0.#}°\nLados {3:0.#} cm · Página {4:0.#} cm",
+                values[1], values[3], values[5], values[2], values[4]);
+        if (markerInput != null && !markerInput.isFocused)
+            markerInput.SetTextWithoutNotify(values[0].ToString("0.#", CultureInfo.CurrentCulture));
     }
 
     public void SetMessage(string message)
@@ -101,27 +102,53 @@ public sealed class ARPlacementEditorUI : MonoBehaviour
     private void Toggle()
     {
         open = !open;
+        IsEditing = open;
         panel.gameObject.SetActive(open);
         toggleLabel.text = open ? "Ver modelo" : "Ajustar modelo";
         openChanged?.Invoke(open);
     }
 
-    private void SelectField(int direction)
+    private void Save()
     {
-        selectedField = (selectedField + direction + FieldLabels.Length) % FieldLabels.Length;
-        RefreshSelectedField();
+        string input = markerInput.text.Trim().Replace(',', '.');
+        if (!float.TryParse(input, NumberStyles.Float, CultureInfo.InvariantCulture, out float width)
+            || float.IsNaN(width) || float.IsInfinity(width) || width < 2f || width > 30f)
+        {
+            SetMessage("Escribe el ancho real del QR entre 2 y 30 cm.");
+            return;
+        }
+        if (!Mathf.Approximately(values[0], width))
+            adjust?.Invoke(0, width - values[0]);
+        markerInput.SetTextWithoutNotify(width.ToString("0.#", CultureInfo.CurrentCulture));
+        save?.Invoke();
     }
 
-    private void RefreshSelectedField()
+    private void Reset()
     {
-        if (fieldLabel != null)
-            fieldLabel.text = (selectedField + 1) + "/" + FieldLabels.Length + " · " + FieldLabels[selectedField];
-        if (valueLabel != null)
-            valueLabel.text = values[selectedField].ToString("0.#") + (selectedField == 5 ? "°" : " cm");
-        if (feedback != null)
-            feedback.text = selectedField == 0
-                ? "El marcador se actualiza al guardar y volver a escanear."
-                : "El modelo cambia en directo. Guarda cuando quede bien.";
+        markerInput.DeactivateInputField();
+        reset?.Invoke();
+    }
+
+    private TMP_InputField MakeMarkerInput(Transform parent)
+    {
+        GameObject go = new GameObject("MarkerWidthInput", typeof(RectTransform),
+            typeof(CanvasRenderer), typeof(Image), typeof(TMP_InputField));
+        go.transform.SetParent(parent, false);
+        Stretch(go.GetComponent<RectTransform>(), new Vector2(0.56f, 0.38f), new Vector2(0.82f, 0.53f));
+        Image image = go.GetComponent<Image>();
+        image.color = new Color(0.88f, 0.95f, 0.95f);
+        image.sprite = QRCodeScanner.GetMessageCardSprite();
+        image.type = Image.Type.Sliced;
+        TMP_Text text = MakeText("MarkerWidthText", go.transform, "6", 28f,
+            new Vector2(0.08f, 0.05f), new Vector2(0.92f, 0.95f), TextAlignmentOptions.Center);
+        text.raycastTarget = true;
+        TMP_InputField input = go.GetComponent<TMP_InputField>();
+        input.textViewport = go.GetComponent<RectTransform>();
+        input.textComponent = (TextMeshProUGUI)text;
+        input.contentType = TMP_InputField.ContentType.DecimalNumber;
+        input.keyboardType = TouchScreenKeyboardType.DecimalPad;
+        input.characterLimit = 5;
+        return input;
     }
 
     private void Layout()
@@ -132,8 +159,8 @@ public sealed class ARPlacementEditorUI : MonoBehaviour
             landscape ? new Vector2(0.53f, 0.88f) : new Vector2(0.70f, 0.745f),
             landscape ? new Vector2(0.82f, 0.985f) : new Vector2(0.97f, 0.81f));
         Stretch(panel,
-            landscape ? new Vector2(0.02f, 0.12f) : new Vector2(0.035f, 0.035f),
-            landscape ? new Vector2(0.49f, 0.68f) : new Vector2(0.965f, 0.205f));
+            landscape ? new Vector2(0.02f, 0.05f) : new Vector2(0.035f, 0.035f),
+            landscape ? new Vector2(0.49f, 0.56f) : new Vector2(0.965f, 0.255f));
     }
 
     private RectTransform MakePanel(string name, Transform parent, Vector2 min, Vector2 max)
@@ -143,7 +170,7 @@ public sealed class ARPlacementEditorUI : MonoBehaviour
         RectTransform rect = go.GetComponent<RectTransform>();
         Stretch(rect, min, max);
         Image image = go.GetComponent<Image>();
-        image.color = new Color(0.985f, 0.991f, 0.991f, 0.98f);
+        image.color = new Color(0.985f, 0.991f, 0.991f, 0.96f);
         image.sprite = QRCodeScanner.GetMessageCardSprite();
         image.type = Image.Type.Sliced;
         return rect;
@@ -180,7 +207,7 @@ public sealed class ARPlacementEditorUI : MonoBehaviour
         label.text = value;
         label.fontSize = size;
         label.enableAutoSizing = true;
-        label.fontSizeMin = 20f;
+        label.fontSizeMin = 18f;
         label.fontSizeMax = size;
         label.alignment = alignment;
         label.color = Ink;
