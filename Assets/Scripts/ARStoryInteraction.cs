@@ -8,14 +8,12 @@ using UnityEngine.InputSystem;
 public sealed class ARStoryInteraction : MonoBehaviour
 {
     private Transform visual;
-    private Vector3 restingPosition;
     private Animation modelAnimation;
     private string idleClip;
-    private string walkClip;
     private string tapAnimationName;
     private string tapClip;
-    private Coroutine walkRoutine;
-    private bool outward;
+    private Coroutine animationRoutine;
+    private bool missingAnimationReported;
 
     public void Configure(string animationName)
     {
@@ -27,18 +25,19 @@ public sealed class ARStoryInteraction : MonoBehaviour
         visual = transform.Find("Visual");
         if (visual == null)
             return;
-        restingPosition = visual.localPosition;
         modelAnimation = visual.GetComponentInChildren<Animation>(true);
         if (modelAnimation == null)
+        {
+            Debug.LogWarning("ARStoryInteraction: el modelo no contiene clips de animación reproducibles.");
             return;
+        }
         modelAnimation.playAutomatically = false;
         modelAnimation.Stop();
         idleClip = FindClip("Idle", "Quieto", "Stand");
-        walkClip = FindClip("Walk", "Caminar", "Walking");
         if (!string.IsNullOrEmpty(tapAnimationName))
         {
             foreach (AnimationState state in modelAnimation)
-                if (string.Equals(state.name, tapAnimationName, StringComparison.Ordinal))
+                if (string.Equals(state.name, tapAnimationName, StringComparison.OrdinalIgnoreCase))
                 {
                     tapClip = state.name;
                     break;
@@ -46,6 +45,17 @@ public sealed class ARStoryInteraction : MonoBehaviour
             if (string.IsNullOrEmpty(tapClip))
                 Debug.LogWarning("ARStoryInteraction: el GLB no contiene la animación configurada: " + tapAnimationName);
         }
+        if (string.IsNullOrEmpty(tapClip))
+            tapClip = FindClip("Walk", "Caminar", "Walking");
+        if (string.IsNullOrEmpty(tapClip))
+            foreach (AnimationState state in modelAnimation)
+                if (!string.Equals(state.name, idleClip, StringComparison.Ordinal))
+                {
+                    tapClip = state.name;
+                    break;
+                }
+        Debug.Log("ARStoryInteraction: clip al tocar = " + (tapClip ?? "ninguno")
+            + "; configurado = " + (tapAnimationName ?? "automático"));
         if (!string.IsNullOrEmpty(idleClip))
             modelAnimation.Play(idleClip);
     }
@@ -66,28 +76,21 @@ public sealed class ARStoryInteraction : MonoBehaviour
         if (PointerHitsUi(position))
             return;
 
-        // A chapter-selected clip plays from any free part of the camera view.
-        if (!string.IsNullOrEmpty(tapClip))
+        if (modelAnimation == null || string.IsNullOrEmpty(tapClip))
         {
-            if (walkRoutine != null)
-                StopCoroutine(walkRoutine);
-            walkRoutine = StartCoroutine(PlayTapAnimation());
-            return;
-        }
-
-        if (Camera.main == null)
-            return;
-        Ray ray = Camera.main.ScreenPointToRay(position);
-        foreach (RaycastHit hit in Physics.RaycastAll(ray, 20f))
-        {
-            if (hit.transform == transform || hit.transform.IsChildOf(transform))
+            if (!missingAnimationReported)
             {
-                if (walkRoutine != null)
-                    StopCoroutine(walkRoutine);
-                walkRoutine = StartCoroutine(PlayTapAnimation());
-                break;
+                missingAnimationReported = true;
+                Debug.LogWarning("ARStoryInteraction: no hay una animación para reproducir al tocar.");
+                FindAnyObjectByType<ARSceneExperienceUI>()?.SetStatus(
+                    "Este modelo no incluye una animación para reproducir. Revisa el GLB en el panel docente.",
+                    ARSceneExperienceUI.MessageTone.Warning, false);
             }
+            return;
         }
+        if (animationRoutine != null)
+            StopCoroutine(animationRoutine);
+        animationRoutine = StartCoroutine(PlayTapAnimation());
     }
 
     private bool PointerHitsUi(Vector2 position)
@@ -105,45 +108,30 @@ public sealed class ARStoryInteraction : MonoBehaviour
 
     private IEnumerator PlayTapAnimation()
     {
-        if (visual == null)
+        if (modelAnimation == null || string.IsNullOrEmpty(tapClip))
             yield break;
-        if (modelAnimation != null && !string.IsNullOrEmpty(tapClip))
+        AnimationState state = modelAnimation[tapClip];
+        if (state == null)
         {
-            modelAnimation.Stop();
-            modelAnimation.Play(tapClip);
-            yield return new WaitForSeconds(Mathf.Max(0.1f, modelAnimation[tapClip].length));
-            modelAnimation.Stop();
-            if (!string.IsNullOrEmpty(idleClip))
-                modelAnimation.Play(idleClip);
-            walkRoutine = null;
+            Debug.LogWarning("ARStoryInteraction: el clip desapareció del modelo: " + tapClip);
+            animationRoutine = null;
             yield break;
         }
-
-        if (modelAnimation != null && !string.IsNullOrEmpty(walkClip))
-            modelAnimation.Play(walkClip);
-
-        // The root is normalized to a physical size; convert 2.5 cm to its local units.
-        float localDistance = 0.025f / Mathf.Max(0.00001f, transform.localScale.x);
-        Vector3 start = visual.localPosition;
-        Vector3 target = restingPosition + (outward ? Vector3.zero : Vector3.forward * localDistance);
-        outward = !outward;
-        float duration = 1.35f;
-        float elapsed = 0f;
-        while (elapsed < duration)
+        modelAnimation.Stop();
+        state.time = 0f;
+        state.speed = 1f;
+        state.wrapMode = WrapMode.Once;
+        if (!modelAnimation.Play(tapClip, PlayMode.StopAll))
         {
-            elapsed += Time.deltaTime;
-            float t = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(elapsed / duration));
-            visual.localPosition = Vector3.Lerp(start, target, t);
-            yield return null;
+            Debug.LogWarning("ARStoryInteraction: Unity no pudo reproducir el clip: " + tapClip);
+            animationRoutine = null;
+            yield break;
         }
-        visual.localPosition = target;
-        if (modelAnimation != null)
-        {
-            modelAnimation.Stop();
-            if (!string.IsNullOrEmpty(idleClip))
-                modelAnimation.Play(idleClip);
-        }
-        walkRoutine = null;
+        yield return new WaitForSeconds(Mathf.Max(0.1f, state.length));
+        modelAnimation.Stop();
+        if (!string.IsNullOrEmpty(idleClip))
+            modelAnimation.Play(idleClip);
+        animationRoutine = null;
     }
 
     private string FindClip(params string[] candidates)

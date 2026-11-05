@@ -785,7 +785,8 @@ public class ARSceneController : MonoBehaviour
         experienceUI?.SetStatus("Descargando el modelo 3D…", ARSceneExperienceUI.MessageTone.Info, false);
 
         GltfImport gltfImport = new GltfImport();
-        Task<bool> loadTask = gltfImport.Load(content.modelUrl);
+        Task<bool> loadTask = gltfImport.Load(content.modelUrl,
+            new ImportSettings { AnimationMethod = AnimationMethod.Legacy });
         while (!loadTask.IsCompleted)
             yield return null;
 
