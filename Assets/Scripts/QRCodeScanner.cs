@@ -52,6 +52,8 @@ public class QRCodeScanner : MonoBehaviour
 
     private IEnumerator Start()
     {
+        // Access, library and QR scanning share this scene's portrait layout.
+        Screen.orientation = ScreenOrientation.Portrait;
         ConfigureCanvasForMobile();
         ConfigureCameraPreviewRect();
         ConfigureScannerOverlay();
@@ -128,7 +130,7 @@ public class QRCodeScanner : MonoBehaviour
         isScanning = true;
 
         Debug.Log("QRCodeScanner: camara iniciada " + (cameraName ?? "default"));
-        SetScannerMessage("Buscando código…", "Apunta al QR del libro y mantenlo dentro del marco.", MessageTone.Neutral);
+        SetScannerMessage("Buscando el QR…", "Coloca el código dentro del marco. Evita reflejos y mueve el teléfono despacio.", MessageTone.Neutral);
         reticlePulseCoroutine = StartCoroutine(PulseScanReticle());
 
         StartCoroutine(UpdateCameraPreviewLayout());
@@ -301,10 +303,10 @@ public class QRCodeScanner : MonoBehaviour
         {
             instructionText.transform.SetParent(instructionCard, false);
             SetStretch(instructionText.rectTransform, Vector2.zero, Vector2.one);
-            instructionText.fontSize = 44f;
+            instructionText.fontSize = 39f;
             instructionText.enableAutoSizing = true;
             instructionText.fontSizeMin = 32f;
-            instructionText.fontSizeMax = 46f;
+            instructionText.fontSizeMax = 41f;
             instructionText.margin = new Vector4(28f, 12f, 28f, 12f);
             instructionText.color = InkColor;
             instructionText.alignment = TextAlignmentOptions.Center;
@@ -315,10 +317,10 @@ public class QRCodeScanner : MonoBehaviour
         {
             statusText.transform.SetParent(statusCard, false);
             SetStretch(statusText.rectTransform, Vector2.zero, Vector2.one);
-            statusText.fontSize = 45f;
+            statusText.fontSize = 42f;
             statusText.enableAutoSizing = true;
             statusText.fontSizeMin = 32f;
-            statusText.fontSizeMax = 48f;
+            statusText.fontSizeMax = 44f;
             statusText.fontStyle = FontStyles.Bold;
             statusText.margin = new Vector4(26f, 10f, 26f, 10f);
             statusText.color = InkColor;
@@ -401,16 +403,16 @@ public class QRCodeScanner : MonoBehaviour
         if (instructionCard != null)
             SetStretch(instructionCard,
                 landscape ? new Vector2(0.025f, 0.66f) : new Vector2(0.055f, 0.80f),
-                landscape ? new Vector2(0.34f, 0.90f) : new Vector2(0.945f, 0.92f));
+                landscape ? new Vector2(0.34f, 0.90f) : new Vector2(0.945f, 0.915f));
         if (statusCard != null)
             SetStretch(statusCard,
-                landscape ? new Vector2(0.025f, 0.14f) : new Vector2(0.10f, 0.115f),
-                landscape ? new Vector2(0.34f, 0.33f) : new Vector2(0.90f, 0.205f));
+                landscape ? new Vector2(0.025f, 0.14f) : new Vector2(0.10f, 0.11f),
+                landscape ? new Vector2(0.34f, 0.33f) : new Vector2(0.90f, 0.195f));
 
         if (scanFrame != null)
         {
-            float frameSize = Mathf.Min(safeWidth * (landscape ? 0.37f : 0.66f),
-                safeHeight * (landscape ? 0.55f : 0.34f));
+            float frameSize = Mathf.Min(safeWidth * (landscape ? 0.36f : 0.60f),
+                safeHeight * (landscape ? 0.54f : 0.30f));
             RectTransform frameRect = scanFrame.rectTransform;
             frameRect.anchorMin = new Vector2(0.5f, 0.5f);
             frameRect.anchorMax = new Vector2(0.5f, 0.5f);

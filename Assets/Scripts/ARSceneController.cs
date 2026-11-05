@@ -105,6 +105,8 @@ public class ARSceneController : MonoBehaviour
 
     IEnumerator Start()
     {
+        // AR controls also support landscape; restore rotation after the portrait scanner.
+        Screen.orientation = ScreenOrientation.AutoRotation;
         BuildContentDictionary();
 
         experienceUI = gameObject.AddComponent<ARSceneExperienceUI>();

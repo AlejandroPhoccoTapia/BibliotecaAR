@@ -60,6 +60,8 @@ public sealed class ARSceneExperienceUI : MonoBehaviour
     private Rect lastSafeArea;
     private Vector2 lastScreenSize;
     private bool lastAudioPlaying;
+    private bool? lastTrackingState;
+    private float hideTrackingSuccessAt;
 
     public void Initialize(
         TMP_Text title,
@@ -126,6 +128,12 @@ public sealed class ARSceneExperienceUI : MonoBehaviour
 
     private void Update()
     {
+        if (hideTrackingSuccessAt > 0f && Time.unscaledTime >= hideTrackingSuccessAt)
+        {
+            hideTrackingSuccessAt = 0f;
+            if (statusPanel != null)
+                statusPanel.gameObject.SetActive(false);
+        }
         if (safeArea != null && (lastSafeArea != Screen.safeArea || lastScreenSize != new Vector2(Screen.width, Screen.height)))
         {
             ConfigureSafeArea();
@@ -144,6 +152,9 @@ public sealed class ARSceneExperienceUI : MonoBehaviour
 
     public void SetStatus(string message, MessageTone tone, bool canRetry)
     {
+        hideTrackingSuccessAt = 0f;
+        if (statusPanel != null)
+            statusPanel.gameObject.SetActive(true);
         if (statusText != null)
         {
             statusText.text = message;
@@ -230,10 +241,16 @@ public sealed class ARSceneExperienceUI : MonoBehaviour
 
     public void HandleTrackingState(bool isTracking)
     {
+        if (lastTrackingState == isTracking)
+            return;
+        lastTrackingState = isTracking;
         if (isTracking)
-            SetStatus("QR detectado. Mantén el teléfono estable para ver el contenido.", MessageTone.Success, false);
+        {
+            SetStatus("Modelo visible sobre el QR.", MessageTone.Success, false);
+            hideTrackingSuccessAt = Time.unscaledTime + 3f;
+        }
         else
-            SetStatus("Puedes seguir leyendo. Para recuperar el modelo, enfoca el QR con buena luz.", MessageTone.Info, false);
+            SetStatus("Modelo fuera de vista. Enfoca el QR con buena luz.", MessageTone.Info, false);
     }
 
     public void SetReadingExpanded(bool expanded)

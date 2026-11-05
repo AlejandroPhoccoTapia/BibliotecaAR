@@ -2,7 +2,7 @@
 
 Cliente Unity de un proyecto educativo de tesis: al escanear el QR de un capítulo de libro, consulta su contenido y muestra un modelo 3D sobre la imagen reconocida, junto con texto narrativo y audio opcional. Los docentes preparan los contenidos en un panel web independiente.
 
-Documentación contrastada con código y escenas el **24 de septiembre de 2026**. Es un MVP. La presencia de scripts no garantiza que todos los flujos estén validados en un dispositivo; esta guía distingue funciones implementadas y pendientes.
+Documentación contrastada con código y escenas el **5 de noviembre de 2026**. Es un MVP. La presencia de scripts no garantiza que todos los flujos estén validados en un dispositivo; esta guía distingue funciones implementadas y pendientes.
 
 ## 1. Proyecto completo
 
@@ -91,7 +91,7 @@ ProjectSettings/           Editor, Android, gráficos y escenas de build
 
 ### Escaneo
 
-`QRCodeScanner.Start()` crea `StudentAppFlow` y espera a que el estudiante pulse «Escanear QR» antes de pedir permiso de cámara. La pantalla guía al usuario para centrar el QR en un marco con esquinas animadas. Su tamaño se calcula a partir del área útil de la pantalla (aproximadamente dos tercios del ancho en vertical) y se reajusta si cambia la orientación o el área segura; la cámara sigue ocupando toda la pantalla. Las instrucciones y el estado aparecen en tarjetas claras con texto oscuro para mantener el contraste sobre la imagen. Los estados distinguen permiso, preparación, búsqueda, lectura y errores de cámara. Si la cámara falla, puede volver a intentar desde la pantalla; si el permiso está bloqueado, la instrucción indica activarlo en Ajustes. Al leer el QR confirma el éxito sin mostrar el identificador técnico. ZXing intenta leer códigos cada `0.25` segundos por defecto. La vista previa ajusta rotación, espejo y proporción en móvil.
+`QRCodeScanner.Start()` crea `StudentAppFlow` y espera a que el estudiante pulse «Escanear QR» antes de pedir permiso de cámara. El acceso, la biblioteca y el escáner usan orientación vertical. La pantalla guía al usuario para centrar el QR en un marco con esquinas animadas. Su tamaño se calcula a partir del área útil de la pantalla (60 % del ancho como máximo en vertical) y se reajusta si cambia el área segura; la cámara sigue ocupando toda la pantalla. Las instrucciones y el estado aparecen en tarjetas claras con texto oscuro para mantener el contraste sobre la imagen. Los estados distinguen permiso, preparación, búsqueda, lectura y errores de cámara. Si la cámara falla, puede volver a intentar desde la pantalla; si el permiso está bloqueado, la instrucción indica activarlo en Ajustes. Al leer el QR confirma el éxito sin mostrar el identificador técnico. ZXing intenta leer códigos cada `0.25` segundos por defecto. La vista previa ajusta rotación, espejo y proporción en móvil. Al entrar en AR se vuelve a permitir la rotación.
 
 Al leer un código nuevo, guarda `ScannedQRData.LastCode`, detiene el escaneo según configuración y carga `ARScene` tras `0.75` segundos por defecto. La cámara del escáner se detiene antes de la transición. `LastCode` es memoria estática para el QR; la sesión y el progreso del estudiante se gestionan aparte.
 
@@ -99,7 +99,7 @@ Al leer un código nuevo, guarda `ScannedQRData.LastCode`, detiene el escaneo se
 
 En `QRScanScene`, `StudentAppFlow` presenta acceso alternativo por código personal o rostro. El docente crea/restablece el código desde el panel. La app obtiene un token Bearer de `/api/student/code-login/` o `/api/student/face-login/`. La opción «Recordar en este dispositivo» está desactivada por defecto para equipos compartidos; si se activa, guarda el token en `PlayerPrefs` y lo valida con `/api/student/me/` al volver a abrir. «Cambiar estudiante» revoca la sesión actual y limpia el dispositivo. El reconocimiento facial del backend es experimental; el código siempre queda como alternativa.
 
-`GET /api/student/library/` entrega «Mis libros» (asignados publicados), «Explorados» (publicados no asignados que abrió) y el último capítulo. `GET /api/student/books/<id>/` entrega capítulos con texto, audio y estado, sin modelo AR. Abrir un capítulo registra `/api/student/chapters/<id>/open/`; «Terminé» llama a `/complete/`. Así, «Retomar» abre la información del último capítulo incluso en otro teléfono. Desde esa lectura, «Ver en AR» abre el escáner: el modelo requiere leer el QR físico. Los borradores no se muestran.
+`GET /api/student/library/` entrega «Mis libros» (asignados publicados), «Explorados» (publicados no asignados que abrió) y el último capítulo. La biblioteca muestra una tarjeta para continuar, portadas descargadas cuando el libro las tiene y tarjetas separadas para libros y capítulos; si una portada falla, queda un marcador visual. `GET /api/student/books/<id>/` entrega capítulos con texto, audio y estado, sin modelo AR. Abrir un capítulo registra `/api/student/chapters/<id>/open/`; «Terminé» llama a `/complete/`. Así, «Retomar» abre la información del último capítulo incluso en otro teléfono. La lectura usa una superficie desplazable, muestra el estado de la narración y permite pausar o continuar el audio; al pasar la app a segundo plano, el audio se pausa. Desde esa lectura, «Ver en AR» abre el escáner: el modelo requiere leer el QR físico. Los borradores no se muestran.
 
 `studentApiBaseUrl` de `QRCodeScanner` configura la API de acceso y progreso; por defecto usa `https://bibliotecaar-backend.onrender.com/api`. Para desarrollo local en un teléfono, cambiarlo a la IP LAN del backend y mantener coherente `apiBaseUrl` de `ARSceneController`. Ambas rutas necesitan internet o red local accesible.
 
@@ -129,7 +129,7 @@ Si falla la API o el JSON y `fallbackToLocalContent` está activo, busca conteni
 
 `ARTrackedImageManager` reconoce referencias. `QRTrackedImagePlacer` compara su nombre con el código escaneado, instancia el recurso como hijo de la imagen y actualiza posición/rotación. Ante pérdida breve de seguimiento conserva el modelo 0,45 s y luego lo reduce suavemente; cuando vuelve el seguimiento lo muestra de nuevo. El texto y audio permanecen disponibles y la tarjeta de lectura se abre para continuar aunque el modelo o el seguimiento fallen.
 
-El estado del QR seguido se comunica a la interfaz. Si no hay seguimiento, se guía al usuario para volver a encuadrar el impreso, moverse lentamente y mejorar la iluminación.
+El estado del QR seguido se comunica a la interfaz. La confirmación de que el modelo está visible desaparece después de unos segundos para despejar la cámara. Si no hay seguimiento, queda una indicación breve para volver a encuadrar el impreso y mejorar la iluminación.
 
 Leer el texto QR con ZXing y estimar su pose con ARCore son pasos diferentes. Un QR legible no garantiza una imagen aceptada o seguida por ARCore.
 
