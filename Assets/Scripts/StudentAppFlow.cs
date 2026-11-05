@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
 using UnityEngine.Networking;
@@ -12,6 +13,9 @@ public sealed class StudentAppFlow : MonoBehaviour
     private static readonly Color Muted = new Color(0.34f, 0.43f, 0.47f);
     private static readonly Color Accent = new Color(0.02f, 0.43f, 0.49f);
     private static readonly Color Surface = new Color(0.96f, 0.98f, 0.98f);
+    private static readonly Color SoftAccent = new Color(0.87f, 0.95f, 0.94f);
+    private static readonly Color SoftBorder = new Color(0.89f, 0.93f, 0.94f);
+    private readonly Dictionary<string, Texture2D> coverCache = new Dictionary<string, Texture2D>();
 
     private QRCodeScanner scanner;
     private TMP_FontAsset font;
@@ -33,6 +37,10 @@ public sealed class StudentAppFlow : MonoBehaviour
     private StudentChapterData currentChapter;
     private bool rememberDevice;
     private bool busy;
+    private bool readingAudioLoading;
+    private bool readingAudioPaused;
+    private bool lastReadingAudioPlaying;
+    private int readingAudioRequestVersion;
     private Rect lastSafeArea;
     private Vector2 lastScreenSize;
 
@@ -41,7 +49,7 @@ public sealed class StudentAppFlow : MonoBehaviour
     public void Initialize(QRCodeScanner qrScanner, TMP_FontAsset uiFont)
     {
         scanner = qrScanner;
-        font = uiFont;
+        font = uiFont != null ? uiFont : TMP_Settings.defaultFontAsset;
         StudentAppSession.LoadRemembered();
         Canvas canvas = qrScanner.cameraPreview != null
             ? qrScanner.cameraPreview.GetComponentInParent<Canvas>() : null;
@@ -96,13 +104,30 @@ public sealed class StudentAppFlow : MonoBehaviour
             facePreview.uvRect = faceCamera.videoVerticallyMirrored
                 ? new Rect(0f, 1f, 1f, -1f) : new Rect(0f, 0f, 1f, 1f);
         }
+        if (readingAudio != null && readingAudio.isPlaying != lastReadingAudioPlaying)
+        {
+            if (lastReadingAudioPlaying && !readingAudio.isPlaying && !readingAudioPaused && readingAudio.clip != null)
+                SetMessage("Terminó la narración. Puedes escucharla otra vez.");
+            lastReadingAudioPlaying = readingAudio.isPlaying;
+            RefreshReadingAudioButtons();
+        }
     }
 
     private void OnDestroy()
     {
         StopFaceCamera();
         if (readingAudio != null)
-            readingAudio.Stop();
+            StopReadingAudio();
+        foreach (Texture2D texture in coverCache.Values)
+            if (texture != null)
+                Destroy(texture);
+        coverCache.Clear();
+    }
+
+    private void OnApplicationPause(bool paused)
+    {
+        if (paused && readingAudio != null && readingAudio.isPlaying)
+            PauseReadingAudio();
     }
 
     private void UpdateSafeArea()
@@ -169,10 +194,16 @@ public sealed class StudentAppFlow : MonoBehaviour
     private void ShowLogin(bool useFace)
     {
         ClearView();
-        Text("WelcomeTitle", safeArea, "Tu biblioteca te espera", 58f,
-            new Vector2(0.08f, 0.84f), new Vector2(0.92f, 0.96f), TextAlignmentOptions.Center, Ink);
-        Text("WelcomeDescription", safeArea, "Entra con tu código o con tu rostro para guardar lo que lees.", 34f,
-            new Vector2(0.10f, 0.76f), new Vector2(0.90f, 0.85f), TextAlignmentOptions.Center, Muted);
+        RectTransform welcome = Panel("WelcomeCard", safeArea, Color.white,
+            new Vector2(0.055f, 0.765f), new Vector2(0.945f, 0.96f));
+        welcome.GetComponent<Image>().sprite = QRCodeScanner.GetMessageCardSprite();
+        welcome.GetComponent<Image>().type = Image.Type.Sliced;
+        Text("WelcomeEyebrow", welcome, "BIBLIOTECA AR", 25f,
+            new Vector2(0.06f, 0.76f), new Vector2(0.94f, 0.94f), TextAlignmentOptions.Left, Accent);
+        Text("WelcomeTitle", welcome, "Tu biblioteca te espera", 52f,
+            new Vector2(0.06f, 0.36f), new Vector2(0.94f, 0.78f), TextAlignmentOptions.MidlineLeft, Ink).fontStyle = FontStyles.Bold;
+        Text("WelcomeDescription", welcome, "Entra para seguir tus cuentos y descubrimientos.", 29f,
+            new Vector2(0.06f, 0.08f), new Vector2(0.94f, 0.37f), TextAlignmentOptions.MidlineLeft, Muted);
 
         Button("CodeMode", safeArea, "Usar código", new Vector2(0.08f, 0.67f),
             new Vector2(0.49f, 0.74f), useFace ? Color.white : Accent, () => ShowLogin(false));
@@ -191,6 +222,12 @@ public sealed class StudentAppFlow : MonoBehaviour
             facePreview = previewObject.GetComponent<RawImage>();
             Stretch(facePreview.rectTransform, new Vector2(0.04f, 0.04f), new Vector2(0.96f, 0.96f));
             facePreview.raycastTarget = false;
+            RectTransform faceHint = Panel("FaceGuidance", previewFrame,
+                new Color(1f, 1f, 1f, 0.90f), new Vector2(0.05f, 0.04f), new Vector2(0.95f, 0.22f));
+            faceHint.GetComponent<Image>().sprite = QRCodeScanner.GetMessageCardSprite();
+            faceHint.GetComponent<Image>().type = Image.Type.Sliced;
+            Text("FaceGuidanceText", faceHint, "Mira a la cámara con buena luz", 26f,
+                Vector2.zero, Vector2.one, TextAlignmentOptions.Center, Ink);
             rememberButton = Button("RememberDevice", safeArea, RememberCaption(),
                 new Vector2(0.10f, 0.24f), new Vector2(0.90f, 0.31f), Color.white, ToggleRemember);
             Button("RecognizeFace", safeArea, "Reconocer mi rostro", new Vector2(0.13f, 0.15f),
@@ -201,7 +238,7 @@ public sealed class StudentAppFlow : MonoBehaviour
         {
             Text("CodeLabel", safeArea, "Código que te entregó tu docente", 32f,
                 new Vector2(0.10f, 0.55f), new Vector2(0.90f, 0.62f), TextAlignmentOptions.Left, Ink);
-            codeInput = Input("StudentCode", safeArea, "Escribe tu código",
+            codeInput = Input("StudentCode", safeArea, "Código del estudiante",
                 new Vector2(0.10f, 0.46f), new Vector2(0.90f, 0.55f));
             rememberButton = Button("RememberDevice", safeArea, RememberCaption(),
                 new Vector2(0.10f, 0.35f), new Vector2(0.90f, 0.43f), Color.white, ToggleRemember);
@@ -211,24 +248,34 @@ public sealed class StudentAppFlow : MonoBehaviour
                 new Vector2(0.87f, 0.25f), Accent, LoginWithCode);
         }
 
-        messageText = Text("LoginMessage", safeArea, string.Empty, 30f,
-            new Vector2(0.10f, 0.015f), new Vector2(0.64f, 0.13f), TextAlignmentOptions.Center,
+        messageText = Text("LoginMessage", safeArea, string.Empty, 29f,
+            new Vector2(0.08f, 0.105f), new Vector2(0.92f, 0.165f), TextAlignmentOptions.Center,
             new Color(0.72f, 0.16f, 0.16f));
-        Button("TeacherMode", safeArea, "Docente", new Vector2(0.67f, 0.035f),
-            new Vector2(0.94f, 0.105f), Color.white, ShowTeacherLogin);
+        Button("TeacherMode", safeArea, "Acceso docente", new Vector2(0.29f, 0.02f),
+            new Vector2(0.71f, 0.09f), Color.white, ShowTeacherLogin);
     }
 
     private void ShowTeacherLogin()
     {
         ClearView();
-        Text("TeacherTitle", safeArea, "Vista docente", 58f,
-            new Vector2(0.09f, 0.80f), new Vector2(0.91f, 0.93f), TextAlignmentOptions.Center, Ink);
-        Text("TeacherHelp", safeArea, "Entra para ajustar el modelo sobre la página. La sesión dura 30 minutos.", 32f,
-            new Vector2(0.11f, 0.65f), new Vector2(0.89f, 0.79f), TextAlignmentOptions.Center, Muted);
+        RectTransform teacherCard = Panel("TeacherWelcomeCard", safeArea, Color.white,
+            new Vector2(0.07f, 0.65f), new Vector2(0.93f, 0.95f));
+        teacherCard.GetComponent<Image>().sprite = QRCodeScanner.GetMessageCardSprite();
+        teacherCard.GetComponent<Image>().type = Image.Type.Sliced;
+        Text("TeacherEyebrow", teacherCard, "ACCESO DOCENTE", 26f,
+            new Vector2(0.07f, 0.76f), new Vector2(0.93f, 0.92f), TextAlignmentOptions.Left, Accent);
+        Text("TeacherTitle", teacherCard, "Prepara la escena en el libro", 50f,
+            new Vector2(0.07f, 0.43f), new Vector2(0.93f, 0.77f), TextAlignmentOptions.MidlineLeft, Ink).fontStyle = FontStyles.Bold;
+        Text("TeacherHelp", teacherCard, "Inicia sesión para ajustar el modelo. Tu acceso dura 30 minutos.", 29f,
+            new Vector2(0.07f, 0.08f), new Vector2(0.93f, 0.44f), TextAlignmentOptions.MidlineLeft, Muted);
+        Text("TeacherUserLabel", safeArea, "Usuario", 28f,
+            new Vector2(0.10f, 0.60f), new Vector2(0.90f, 0.64f), TextAlignmentOptions.Left, Ink);
         teacherUserInput = Input("TeacherUser", safeArea, "Usuario docente",
             new Vector2(0.10f, 0.52f), new Vector2(0.90f, 0.60f));
         teacherUserInput.characterLimit = 150;
         teacherUserInput.contentType = TMP_InputField.ContentType.Standard;
+        Text("TeacherPasswordLabel", safeArea, "Contraseña", 28f,
+            new Vector2(0.10f, 0.49f), new Vector2(0.90f, 0.52f), TextAlignmentOptions.Left, Ink);
         teacherPasswordInput = Input("TeacherPassword", safeArea, "Contraseña",
             new Vector2(0.10f, 0.41f), new Vector2(0.90f, 0.49f));
         teacherPasswordInput.characterLimit = 128;
@@ -246,10 +293,16 @@ public sealed class StudentAppFlow : MonoBehaviour
     private void ShowTeacherReady()
     {
         ClearView();
-        Text("TeacherReady", safeArea, "Vista docente activa", 56f,
-            new Vector2(0.09f, 0.72f), new Vector2(0.91f, 0.90f), TextAlignmentOptions.Center, Ink);
-        Text("TeacherReadyHelp", safeArea, "Escanea el QR del capítulo para ajustar el modelo sobre la página.", 34f,
-            new Vector2(0.11f, 0.53f), new Vector2(0.89f, 0.69f), TextAlignmentOptions.Center, Muted);
+        RectTransform card = Panel("TeacherReadyCard", safeArea, Color.white,
+            new Vector2(0.07f, 0.47f), new Vector2(0.93f, 0.91f));
+        card.GetComponent<Image>().sprite = QRCodeScanner.GetMessageCardSprite();
+        card.GetComponent<Image>().type = Image.Type.Sliced;
+        Text("TeacherReadyEyebrow", card, "MODO DOCENTE", 27f,
+            new Vector2(0.07f, 0.76f), new Vector2(0.93f, 0.91f), TextAlignmentOptions.Left, Accent);
+        Text("TeacherReady", card, "Ajusta cada modelo sobre el libro", 53f,
+            new Vector2(0.07f, 0.48f), new Vector2(0.93f, 0.77f), TextAlignmentOptions.MidlineLeft, Ink).fontStyle = FontStyles.Bold;
+        Text("TeacherReadyHelp", card, "1  Escanea el QR impreso\n2  Ajusta el modelo con gestos\n3  Guarda la posición", 31f,
+            new Vector2(0.07f, 0.10f), new Vector2(0.93f, 0.50f), TextAlignmentOptions.MidlineLeft, Muted);
         Button("TeacherScan", safeArea, "Escanear capítulo", new Vector2(0.13f, 0.32f),
             new Vector2(0.87f, 0.41f), Accent, RequestScan);
         Button("TeacherExit", safeArea, "Salir del modo docente", new Vector2(0.13f, 0.21f),
@@ -334,7 +387,7 @@ public sealed class StudentAppFlow : MonoBehaviour
     {
         if (busy || codeInput == null)
             return;
-        string code = codeInput.text.Trim();
+        string code = codeInput.text.Trim().ToUpperInvariant();
         if (string.IsNullOrEmpty(code))
         {
             SetMessage("Escribe el código que te dio tu docente.");
@@ -519,25 +572,27 @@ public sealed class StudentAppFlow : MonoBehaviour
         StopReadingAudio();
         currentChapter = null;
         ClearView();
-        Header("Hola, " + StudentAppSession.StudentName, null, ChangeStudent);
+        string name = StudentAppSession.StudentName;
+        string firstName = string.IsNullOrWhiteSpace(name) ? "lector" : name.Trim().Split(' ')[0];
+        Header("Hola, " + firstName, null, ChangeStudent);
         RectTransform content = ScrollContent(new Vector2(0.05f, 0.13f), new Vector2(0.95f, 0.76f));
+        Label(content, "Elige una historia para seguir leyendo.", 32f, Muted);
         if (library.resume != null)
         {
             Label(content, "CONTINUAR LEYENDO", 28f, Accent);
-            ListButton(content, library.resume.book_title + "\n" + library.resume.scene_title +
-                (library.resume.is_completed ? " · Leído" : " · En progreso"),
-                () => StartCoroutine(OpenBook(library.resume.book_id, library.resume.scene_id)));
+            ResumeCard(content, library.resume);
         }
 
-        Label(content, "MIS LIBROS", 28f, Accent);
+        int assignedCount = library.assigned_books != null ? library.assigned_books.Length : 0;
+        Label(content, "MIS LIBROS · " + assignedCount, 28f, Accent);
         AddBooks(content, library.assigned_books, "Tu docente aún no te asignó libros. Puedes explorar con un QR.");
         if (library.recent_books != null && library.recent_books.Length > 0)
         {
             Label(content, "EXPLORADOS", 28f, Accent);
             AddBooks(content, library.recent_books, string.Empty);
         }
-        Label(content, "PARA DOCENTES", 28f, Accent);
-        ListButton(content, "Ajustar modelos sobre la página", ShowTeacherLogin);
+        Label(content, "OPCIONES", 28f, Accent);
+        ListButton(content, "Vista docente · Ajustar modelos", ShowTeacherLogin);
         Button("ScanFromLibrary", safeArea, "Escanear QR", new Vector2(0.12f, 0.02f),
             new Vector2(0.88f, 0.105f), Accent, RequestScan);
     }
@@ -546,15 +601,12 @@ public sealed class StudentAppFlow : MonoBehaviour
     {
         if (books == null || books.Length == 0)
         {
-            Label(parent, emptyMessage, 32f, Muted);
+            if (!string.IsNullOrEmpty(emptyMessage))
+                EmptyCard(parent, emptyMessage);
             return;
         }
         foreach (StudentBookData book in books)
-        {
-            int bookId = book.id;
-            ListButton(parent, book.title + (string.IsNullOrEmpty(book.description) ? string.Empty : "\n" + book.description),
-                () => StartCoroutine(OpenBook(bookId, 0)));
-        }
+            BookCard(parent, book);
     }
 
     private IEnumerator OpenBook(int bookId, int resumeChapterId)
@@ -584,7 +636,7 @@ public sealed class StudentAppFlow : MonoBehaviour
             ShowHome();
             yield break;
         }
-        if (resumeChapterId != 0)
+        if (resumeChapterId != 0 && bookDetail.chapters != null)
         {
             foreach (StudentChapterData chapter in bookDetail.chapters)
             {
@@ -606,18 +658,15 @@ public sealed class StudentAppFlow : MonoBehaviour
         Header(bookDetail.book.title, () => StartCoroutine(LoadLibrary()), null);
         RectTransform content = ScrollContent(new Vector2(0.05f, 0.04f), new Vector2(0.95f, 0.76f));
         if (!string.IsNullOrEmpty(bookDetail.book.description))
-            Label(content, bookDetail.book.description, 34f, Muted);
-        Label(content, "CAPÍTULOS", 28f, Accent);
+            EmptyCard(content, bookDetail.book.description);
+        int chapterCount = bookDetail.chapters != null ? bookDetail.chapters.Length : 0;
+        Label(content, "CAPÍTULOS · " + chapterCount, 28f, Accent);
         if (bookDetail.chapters == null || bookDetail.chapters.Length == 0)
-            Label(content, "Este libro todavía no tiene capítulos.", 32f, Muted);
+            EmptyCard(content, "Este libro todavía no tiene capítulos.");
         else
         {
             foreach (StudentChapterData chapter in bookDetail.chapters)
-            {
-                StudentChapterData selected = chapter;
-                ListButton(content, "Capítulo " + chapter.order + " · " + chapter.title +
-                    (chapter.is_completed ? "\n✓ Leído" : "\nToca para leer"), () => OpenChapter(selected));
-            }
+                ChapterCard(content, chapter);
         }
     }
 
@@ -633,18 +682,27 @@ public sealed class StudentAppFlow : MonoBehaviour
     {
         ClearView();
         Header(currentChapter.title, ShowBook, null);
-        RectTransform content = ScrollContent(new Vector2(0.05f, 0.23f), new Vector2(0.95f, 0.76f));
+        RectTransform readingSurface = Panel("ReadingSurface", safeArea, Color.white,
+            new Vector2(0.04f, 0.22f), new Vector2(0.96f, 0.78f));
+        readingSurface.GetComponent<Image>().sprite = QRCodeScanner.GetMessageCardSprite();
+        readingSurface.GetComponent<Image>().type = Image.Type.Sliced;
+        readingSurface.GetComponent<Image>().raycastTarget = false;
+        RectTransform content = ScrollContent(new Vector2(0.07f, 0.25f), new Vector2(0.93f, 0.75f));
         Label(content, "CAPÍTULO " + currentChapter.order, 28f, Accent);
-        Label(content, currentChapter.text, 40f, Ink);
+        TMP_Text narrative = Label(content, currentChapter.text, 38f, Ink);
+        narrative.lineSpacing = 8f;
+        narrative.paragraphSpacing = 12f;
         if (!string.IsNullOrEmpty(currentChapter.audio_url))
         {
             Button("ReadAudio", safeArea, "Escuchar audio", new Vector2(0.07f, 0.14f),
                 new Vector2(0.48f, 0.21f), Color.white, PlayReadingAudio);
             Button("PauseReadAudio", safeArea, "Pausar", new Vector2(0.52f, 0.14f),
                 new Vector2(0.93f, 0.21f), Color.white, PauseReadingAudio);
+            RefreshReadingAudioButtons();
         }
-        Button("CompletedChapter", safeArea, currentChapter.is_completed ? "✓ Leído" : "Terminé",
+        Button completed = Button("CompletedChapter", safeArea, currentChapter.is_completed ? "✓ Leído" : "Terminé",
             new Vector2(0.07f, 0.03f), new Vector2(0.48f, 0.11f), Accent, CompleteChapter);
+        completed.interactable = !currentChapter.is_completed;
         Button("OpenARScanner", safeArea, "Ver en AR · Escanear", new Vector2(0.52f, 0.03f),
             new Vector2(0.93f, 0.11f), Accent, RequestScan);
         messageText = Text("ChapterFeedback", safeArea, string.Empty, 28f,
@@ -681,6 +739,8 @@ public sealed class StudentAppFlow : MonoBehaviour
                 {
                     TMP_Text label = button.GetComponentInChildren<TMP_Text>();
                     if (label != null) label.text = "✓ Leído";
+                    Button completed = button.GetComponent<Button>();
+                    if (completed != null) completed.interactable = false;
                 }
             }
         }
@@ -695,53 +755,101 @@ public sealed class StudentAppFlow : MonoBehaviour
 
     private void PlayReadingAudio()
     {
-        if (currentChapter == null || string.IsNullOrEmpty(currentChapter.audio_url))
+        if (currentChapter == null || string.IsNullOrEmpty(currentChapter.audio_url) || readingAudioLoading)
             return;
         if (readingAudio.clip != null)
         {
-            readingAudio.UnPause();
+            readingAudioPaused = false;
+            if (readingAudio.time <= 0.01f || readingAudio.time >= readingAudio.clip.length - 0.1f)
+                readingAudio.Play();
+            else
+                readingAudio.UnPause();
+            SetMessage("Reproduciendo narración…");
+            RefreshReadingAudioButtons();
             return;
         }
-        StartCoroutine(LoadReadingAudio(currentChapter.audio_url));
+        StartCoroutine(LoadReadingAudio(currentChapter.audio_url, readingAudioRequestVersion));
     }
 
-    private IEnumerator LoadReadingAudio(string url)
+    private IEnumerator LoadReadingAudio(string url, int requestVersion)
     {
+        readingAudioLoading = true;
         SetMessage("Cargando audio…");
+        RefreshReadingAudioButtons();
         using (UnityWebRequest request = UnityWebRequestMultimedia.GetAudioClip(url, AudioType.UNKNOWN))
         {
             request.timeout = 45;
             yield return request.SendWebRequest();
+            if (requestVersion != readingAudioRequestVersion)
+                yield break;
+            readingAudioLoading = false;
             if (request.result != UnityWebRequest.Result.Success)
             {
                 SetMessage("No se pudo cargar el audio. Inténtalo de nuevo.");
+                RefreshReadingAudioButtons();
                 yield break;
             }
             if (currentChapter == null || currentChapter.audio_url != url)
             {
                 Destroy(DownloadHandlerAudioClip.GetContent(request));
+                RefreshReadingAudioButtons();
                 yield break;
             }
             readingAudio.clip = DownloadHandlerAudioClip.GetContent(request);
+            if (readingAudio.clip == null)
+            {
+                SetMessage("El audio no se pudo abrir. Inténtalo de nuevo.");
+                RefreshReadingAudioButtons();
+                yield break;
+            }
             readingAudio.Play();
-            SetMessage(string.Empty);
+            readingAudioPaused = false;
+            SetMessage("Reproduciendo narración…");
+            RefreshReadingAudioButtons();
         }
     }
 
     private void PauseReadingAudio()
     {
         if (readingAudio != null && readingAudio.isPlaying)
+        {
+            readingAudioPaused = true;
             readingAudio.Pause();
+            SetMessage("Narración en pausa");
+            RefreshReadingAudioButtons();
+        }
     }
 
     private void StopReadingAudio()
     {
+        readingAudioRequestVersion++;
+        readingAudioLoading = false;
+        readingAudioPaused = false;
         if (readingAudio == null)
             return;
         readingAudio.Stop();
         if (readingAudio.clip != null)
             Destroy(readingAudio.clip);
         readingAudio.clip = null;
+        lastReadingAudioPlaying = false;
+    }
+
+    private void RefreshReadingAudioButtons()
+    {
+        if (safeArea == null || readingAudio == null)
+            return;
+        Button play = safeArea.Find("ReadAudio")?.GetComponent<Button>();
+        Button pause = safeArea.Find("PauseReadAudio")?.GetComponent<Button>();
+        bool playing = readingAudio.isPlaying;
+        if (play != null)
+        {
+            play.interactable = !readingAudioLoading && !playing;
+            TMP_Text label = play.GetComponentInChildren<TMP_Text>();
+            if (label != null)
+                label.text = readingAudioLoading ? "Cargando audio…" : readingAudioPaused ? "Continuar audio" : "Escuchar audio";
+        }
+        if (pause != null)
+            pause.interactable = playing;
     }
 
     private void RequestScan()
@@ -872,7 +980,149 @@ public sealed class StudentAppFlow : MonoBehaviour
         return content;
     }
 
-    private void Label(Transform parent, string value, float size, Color color)
+    private RectTransform FlowCard(string name, Transform parent, Color color, float height)
+    {
+        RectTransform card = Panel(name, parent, color, Vector2.zero, Vector2.one);
+        Image image = card.GetComponent<Image>();
+        image.sprite = QRCodeScanner.GetMessageCardSprite();
+        image.type = Image.Type.Sliced;
+        LayoutElement layout = card.gameObject.AddComponent<LayoutElement>();
+        layout.minHeight = height;
+        layout.preferredHeight = height;
+        return card;
+    }
+
+    private Button CardAction(RectTransform card, Action action)
+    {
+        Button button = card.gameObject.AddComponent<Button>();
+        button.targetGraphic = card.GetComponent<Image>();
+        button.onClick.AddListener(() => action?.Invoke());
+        button.colors = new ColorBlock
+        {
+            normalColor = Color.white,
+            highlightedColor = new Color(0.95f, 0.99f, 0.99f),
+            pressedColor = new Color(0.88f, 0.96f, 0.95f),
+            selectedColor = Color.white,
+            disabledColor = new Color(1f, 1f, 1f, 0.6f),
+            colorMultiplier = 1f,
+            fadeDuration = 0.12f
+        };
+        return button;
+    }
+
+    private void EmptyCard(Transform parent, string message)
+    {
+        RectTransform card = FlowCard("EmptyCard", parent, Color.white, 130f);
+        TMP_Text text = Text("EmptyMessage", card, message, 30f,
+            new Vector2(0.06f, 0.10f), new Vector2(0.94f, 0.90f), TextAlignmentOptions.MidlineLeft, Muted);
+        text.margin = new Vector4(10f, 6f, 10f, 6f);
+    }
+
+    private void ResumeCard(Transform parent, StudentResumeData resume)
+    {
+        RectTransform card = FlowCard("ResumeReadingCard", parent, SoftAccent, 170f);
+        CardAction(card, () => StartCoroutine(OpenBook(resume.book_id, resume.scene_id)));
+        Text("ResumeBook", card, resume.book_title, 26f,
+            new Vector2(0.06f, 0.67f), new Vector2(0.88f, 0.90f), TextAlignmentOptions.Left, Accent);
+        TMP_Text title = Text("ResumeChapter", card, resume.scene_title, 39f,
+            new Vector2(0.06f, 0.30f), new Vector2(0.88f, 0.67f), TextAlignmentOptions.MidlineLeft, Ink);
+        title.fontStyle = FontStyles.Bold;
+        Text("ResumeAction", card, resume.is_completed ? "Leer de nuevo  ›" : "Seguir leyendo  ›", 28f,
+            new Vector2(0.06f, 0.07f), new Vector2(0.88f, 0.30f), TextAlignmentOptions.Left, Accent);
+    }
+
+    private void BookCard(Transform parent, StudentBookData book)
+    {
+        RectTransform card = FlowCard("BookCard", parent, Color.white, 200f);
+        int bookId = book.id;
+        CardAction(card, () => StartCoroutine(OpenBook(bookId, 0)));
+
+        RectTransform coverFrame = Panel("BookCover", card, SoftBorder,
+            new Vector2(0.035f, 0.10f), new Vector2(0.19f, 0.90f));
+        coverFrame.GetComponent<Image>().sprite = QRCodeScanner.GetMessageCardSprite();
+        coverFrame.GetComponent<Image>().type = Image.Type.Sliced;
+        coverFrame.gameObject.AddComponent<Mask>().showMaskGraphic = true;
+        TMP_Text monogram = Text("BookCoverPlaceholder", coverFrame, "AR", 38f,
+            Vector2.zero, Vector2.one, TextAlignmentOptions.Center, Accent);
+        monogram.fontStyle = FontStyles.Bold;
+        GameObject coverObject = new GameObject("BookCoverImage", typeof(RectTransform), typeof(CanvasRenderer), typeof(RawImage));
+        coverObject.transform.SetParent(coverFrame, false);
+        RawImage cover = coverObject.GetComponent<RawImage>();
+        Stretch(cover.rectTransform, Vector2.zero, Vector2.one);
+        cover.raycastTarget = false;
+        cover.gameObject.SetActive(false);
+        if (!string.IsNullOrWhiteSpace(book.cover_url))
+            StartCoroutine(LoadCover(book.cover_url, cover));
+
+        TMP_Text title = Text("BookTitle", card, book.title, 37f,
+            new Vector2(0.23f, 0.54f), new Vector2(0.92f, 0.90f), TextAlignmentOptions.MidlineLeft, Ink);
+        title.fontStyle = FontStyles.Bold;
+        if (!string.IsNullOrWhiteSpace(book.description))
+            Text("BookDescription", card, book.description, 26f,
+                new Vector2(0.23f, 0.29f), new Vector2(0.92f, 0.55f), TextAlignmentOptions.MidlineLeft, Muted);
+        Text("BookOpen", card, "Abrir cuento  ›", 27f,
+            new Vector2(0.23f, 0.05f), new Vector2(0.92f, 0.27f), TextAlignmentOptions.Left, Accent);
+    }
+
+    private IEnumerator LoadCover(string url, RawImage target)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out Uri absolute))
+        {
+            if (!Uri.TryCreate(StudentAppSession.ApiBaseUrl, UriKind.Absolute, out Uri baseUri))
+                yield break;
+            if (!Uri.TryCreate(baseUri, url, out absolute))
+                yield break;
+        }
+        if (absolute.Scheme != Uri.UriSchemeHttps && absolute.Scheme != Uri.UriSchemeHttp)
+            yield break;
+
+        string key = absolute.ToString();
+        if (!coverCache.TryGetValue(key, out Texture2D texture))
+        {
+            using (UnityWebRequest request = UnityWebRequestTexture.GetTexture(key))
+            {
+                request.timeout = 12;
+                yield return request.SendWebRequest();
+                if (request.result != UnityWebRequest.Result.Success)
+                    yield break;
+                texture = DownloadHandlerTexture.GetContent(request);
+                if (texture == null)
+                    yield break;
+                coverCache[key] = texture;
+            }
+        }
+        if (target == null)
+            yield break;
+        target.texture = texture;
+        target.gameObject.SetActive(true);
+        Canvas.ForceUpdateCanvases();
+        float frameAspect = target.rectTransform.rect.width / Mathf.Max(1f, target.rectTransform.rect.height);
+        float imageAspect = (float)texture.width / Mathf.Max(1, texture.height);
+        target.uvRect = imageAspect > frameAspect
+            ? new Rect((1f - frameAspect / imageAspect) * 0.5f, 0f, frameAspect / imageAspect, 1f)
+            : new Rect(0f, (1f - imageAspect / frameAspect) * 0.5f, 1f, imageAspect / frameAspect);
+    }
+
+    private void ChapterCard(Transform parent, StudentChapterData chapter)
+    {
+        RectTransform card = FlowCard("ChapterCard", parent, Color.white, 150f);
+        StudentChapterData selected = chapter;
+        CardAction(card, () => OpenChapter(selected));
+        RectTransform number = Panel("ChapterNumber", card, SoftAccent,
+            new Vector2(0.04f, 0.22f), new Vector2(0.18f, 0.78f));
+        number.GetComponent<Image>().sprite = QRCodeScanner.GetMessageCardSprite();
+        number.GetComponent<Image>().type = Image.Type.Sliced;
+        Text("ChapterNumberText", number, chapter.order.ToString(), 31f,
+            Vector2.zero, Vector2.one, TextAlignmentOptions.Center, Accent).fontStyle = FontStyles.Bold;
+        Text("ChapterEyebrow", card, "CAPÍTULO " + chapter.order, 23f,
+            new Vector2(0.23f, 0.71f), new Vector2(0.91f, 0.91f), TextAlignmentOptions.Left, Accent);
+        Text("ChapterTitle", card, chapter.title, 34f,
+            new Vector2(0.23f, 0.37f), new Vector2(0.91f, 0.73f), TextAlignmentOptions.MidlineLeft, Ink).fontStyle = FontStyles.Bold;
+        Text("ChapterProgress", card, chapter.is_completed ? "Leído · Volver a leer  ›" : "Leer capítulo  ›", 26f,
+            new Vector2(0.23f, 0.08f), new Vector2(0.91f, 0.34f), TextAlignmentOptions.Left, Muted);
+    }
+
+    private TMP_Text Label(Transform parent, string value, float size, Color color)
     {
         GameObject item = new GameObject("ListText", typeof(RectTransform), typeof(CanvasRenderer),
             typeof(TextMeshProUGUI));
@@ -885,6 +1135,7 @@ public sealed class StudentAppFlow : MonoBehaviour
         label.enableWordWrapping = true;
         label.raycastTarget = false;
         label.margin = new Vector4(8f, 8f, 8f, 8f);
+        return label;
     }
 
     private void ListButton(Transform parent, string value, Action action)
@@ -944,6 +1195,16 @@ public sealed class StudentAppFlow : MonoBehaviour
         Button button = item.GetComponent<Button>();
         button.targetGraphic = background;
         button.onClick.AddListener(() => action?.Invoke());
+        button.colors = new ColorBlock
+        {
+            normalColor = Color.white,
+            highlightedColor = new Color(0.92f, 0.98f, 0.98f),
+            pressedColor = new Color(0.82f, 0.94f, 0.93f),
+            selectedColor = Color.white,
+            disabledColor = new Color(1f, 1f, 1f, 0.52f),
+            colorMultiplier = 1f,
+            fadeDuration = 0.12f
+        };
         TMP_Text caption = Text("Label", item.transform, label, 34f,
             new Vector2(0.04f, 0.04f), new Vector2(0.96f, 0.96f), TextAlignmentOptions.Center,
             color == Color.white ? Accent : Color.white);
