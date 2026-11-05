@@ -243,6 +243,7 @@ Consultar consola y Android Logcat; los logs usan prefijos `QRCodeScanner:`, `AR
 | QR dinámico sin tracking | Validación de imagen, biblioteca mutable, nombre y ancho físico. |
 | Tamaño/orientación incorrectos | Medir QR impreso; abrir vista docente en móvil y ajustar tamaño, posición y giro; revisar si el QR ya está en la biblioteca estática. |
 | Materiales incorrectos en Android | Importación y shaders glTFast disponibles en el build; revisar GraphicsSettings. |
+| `Error building Player: 2 errors` después de copiar el APK, con `Shutdown worker was forced killed...` | Comprobar en `Editor.log` si Gradle terminó y el APK se copió. Verificar el archivo e intentar un segundo Build. Unity registra un [problema abierto de workers en Windows para 6000.3.19f1](https://issuetracker.unity.com/issues/6185/shutdown-worker-was-forced-killed-because-it-kept-running-worker-errors-are-thrown-after-building-a-blank-hdrp-project); el síntoma coincide, aunque su caso de reproducción es otro tipo de proyecto. Las advertencias de shaders Sentis no son estos dos errores. |
 | Toque no coloca objetos | El script y los planos están deshabilitados en esta escena. |
 | Fallo solo remoto | URL real, acceso público a recursos, HTTPS y respuesta del servidor. |
 
@@ -261,7 +262,7 @@ Abrir ARScene directamente sin escaneo previo no aporta un código válido. Veri
 - El modo de raycast es alternativo: al activarlo, probar también qué ocurre si el GLB termina de descargarse después de colocar un objeto.
 - El panel tiene problemas de listas multipart y valores vacíos; consultar su README antes de atribuir esos fallos a Unity.
 
-Los scripts C# se compilaron con el compilador Roslyn y las referencias del proyecto Unity, sin errores. No se compiló ni ejecutó la aplicación Android al redactar esta documentación, ni se comprobó el servicio remoto. La validación integral requiere un dispositivo real y los tres componentes.
+El 5 de noviembre de 2026, Unity 6000.3.19f1 completó IL2CPP y Gradle y copió un APK Android de 41,5 MB. Al cerrar el build informó dos errores `Shutdown worker was forced killed...` y marcó el resultado como fallido. El APK pasó la verificación de firma, se instaló mediante ADB y abrió en el teléfono. Esto confirma que se generó un paquete ejecutable; todavía falta comprobar el flujo completo de QR, AR, audio y API en el dispositivo. Los scripts C# se compilaron sin errores. La validación integral requiere un dispositivo real y los tres componentes.
 
 ## 11. Guía para el siguiente asistente
 
